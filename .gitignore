@@ -1,0 +1,63 @@
+# Python相关
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyTorch模型文件
+*.pth
+*.pt
+*.onnx
+
+# 数据文件
+data/
+outputs/
+logs/
+*.log
+
+# IDE相关
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.temp
+
+# 配置文件（包含敏感信息的）
+config/local_config.json
+test_config.json
+
+# Conda环境
+.conda/
+
+# 测试文件
+memory_test.py
+interactive_test.py
+
+# 备份文件
+*_fixed.py
+*_backup.py

@@ -1,0 +1,71 @@
+# 路径配置文件
+paths:
+  # 数据路径
+  data:
+    root: "data"
+    train: "data/train"
+    validation: "data/val"
+    test: "data/test"
+    
+  # 输入输出路径 (用户可配置)
+  input:
+    # 原始JPG文件夹
+    source_folder: "D:/桌面/筛选/JPG"
+    
+    # RAW文件处理路径
+    raw_folder: "D:/桌面/筛选/RAW"
+    
+  output:
+    # 分类结果输出
+    base_folder: "D:/桌面/筛选"
+    subfolders:
+      main_image: "主图"
+      detail: "细节"
+      tag: "吊牌"
+      
+    # 统计报告输出
+    reports: "outputs/reports"
+    
+  # 系统路径
+  system:
+    logs: "logs"
+    models: "models"
+    cache: "cache"
+    temp: "temp"
+
+# 文件处理设置
+file_handling:
+  # 支持的图片格式
+  supported_formats:
+    - ".jpg"
+    - ".jpeg"
+    - ".png"
+    - ".bmp"
+    - ".tiff"
+    
+  # 处理选项
+  processing:
+    # 是否删除原文件 (移动而非复制)
+    move_files: true
+    
+    # 是否创建子文件夹
+    create_subfolders: true
+    
+    # 文件名冲突处理
+    conflict_resolution: "rename"  # rename, skip, overwrite
+    
+    # 是否保存处理日志
+    save_logs: true
+    
+  # 备份设置
+  backup:
+    enabled: false
+    folder: "backup"
+    compress: true
+
+# 监控路径 (可选的自动监控功能)
+monitoring:
+  enabled: false
+  watch_folders:
+    - "D:/桌面/筛选/JPG"
+  auto_process: false

@@ -1,0 +1,35 @@
+# 模型配置文件
+model:
+  # 支持的模型类型: efficientnetv2_s, convnext_tiny
+  name: "efficientnetv2_s"
+  num_classes: 3
+  pretrained: true
+  
+  # 图像尺寸
+  image_size: 512
+  
+  # 类别标签
+  classes:
+    - "主图"
+    - "细节" 
+    - "吊牌"
+
+# 模型路径配置
+paths:
+  saved_models: "models/saved_models"
+  checkpoints: "models/checkpoints"
+  exports: "models/exports"
+
+# 模型性能配置
+performance:
+  # 混合精度训练
+  use_amp: true
+  
+  # 模型编译优化 (PyTorch 2.0+)
+  compile_model: true
+  
+  # 数据加载器设置
+  dataloader:
+    num_workers: 4
+    pin_memory: true
+    persistent_workers: true

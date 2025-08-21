@@ -1,0 +1,28 @@
+# PyTorch和相关库
+torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
+timm>=0.9.0
+
+# UI界面
+PySide6>=6.5.0
+
+# 图像处理
+Pillow>=9.0.0
+opencv-python>=4.7.0
+
+# 数据处理和科学计算
+numpy>=1.21.0
+pandas>=1.5.0
+matplotlib>=3.6.0
+seaborn>=0.11.0
+
+# 配置和工具
+PyYAML>=6.0
+tqdm>=4.64.0
+scikit-learn>=1.2.0
+
+# 开发工具
+pytest>=7.0.0
+black>=22.0.0
+flake8>=5.0.0

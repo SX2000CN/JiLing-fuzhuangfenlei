@@ -1,0 +1,31 @@
+{
+  "model_config": {
+    "model_name": "tf_efficientnetv2_s",
+    "model_path": "D:\\桌面\\编程\\JiLing-fuzhuangfenlei\\models/JiLing_baiditu_1755749592.pth",
+    "num_classes": 3,
+    "input_size": 384
+  },
+  "paths": {
+    "input_folder": "D:/桌面/筛选",
+    "output_folder": "D:/桌面/筛选",
+    "log_folder": "logs"
+  },
+  "classification": {
+    "batch_size": 32,
+    "confidence_threshold": 0.5,
+    "classes": [
+      "主图",
+      "细节",
+      "吊牌"
+    ]
+  },
+  "processing": {
+    "move_files": true,
+    "save_statistics": true,
+    "create_subfolders": true
+  },
+  "device": {
+    "preferred": "auto",
+    "fallback": "cpu"
+  }
+}
