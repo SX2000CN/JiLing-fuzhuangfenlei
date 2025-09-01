@@ -1,12 +1,12 @@
 {
   "model_config": {
     "model_name": "tf_efficientnetv2_s",
-    "model_path": "D:\\桌面\\编程\\JiLing-fuzhuangfenlei\\models/JiLing_baiditu_1755749592.pth",
+    "model_path": "D:\\桌面\\编程\\JiLing-fuzhuangfenlei\\models/JiLing_baiditu_1755873239.pth",
     "num_classes": 3,
     "input_size": 384
   },
   "paths": {
-    "input_folder": "D:/桌面/筛选",
+    "input_folder": "D:/桌面/筛选/JPG",
     "output_folder": "D:/桌面/筛选",
     "log_folder": "logs"
   },

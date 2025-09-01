@@ -51,6 +51,7 @@ class TrainingWorker(QObject):
             # 清理GPU内存
             self.progress_updated.emit(0, "清理GPU内存...", {})
             import torch
+            import os  # 明确导入os模块
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
@@ -130,7 +131,6 @@ class TrainingWorker(QObject):
                 self.progress_updated.emit(95, "保存模型...", {})
                 
                 # 确保models目录存在
-                import os
                 os.makedirs("models", exist_ok=True)
                 
                 model_save_path = f"models/JiLing_baiditu_{int(time.time())}.pth"
@@ -968,7 +968,7 @@ class MainWindow(QMainWindow):
             "class_names": ["主图", "细节", "吊牌"],
             "input_size": [224, 224],
             "device": "auto",
-            "model_path": "models/JiLing_baiditu_1755749592.pth",
+            "model_path": "models/JiLing_baiditu_1755873239.pth",
             "image_extensions": [".jpg", ".jpeg", ".png", ".bmp", ".tiff"]
         }
         self.config_edit.setPlainText(json.dumps(default_config, indent=2, ensure_ascii=False))
@@ -1150,43 +1150,38 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
         try:
             # 获取项目根目录
             project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            
-            # 检查训练的模型是否存在
-            trained_model_path = "models/JiLing_baiditu_1755749592.pth"
-            trained_model_full_path = os.path.join(project_root, trained_model_path)
-            if os.path.exists(trained_model_full_path):
-                self.model_file_edit.setText(trained_model_path)
-                self.load_model()
-                return
-            
-            # 检查新训练的JiLing_baiditu模型是否存在
-            jiling_model_path = "models/JiLing_baiditu_1755749592.pth"
-            jiling_model_full_path = os.path.join(project_root, jiling_model_path)
-            if os.path.exists(jiling_model_full_path):
-                self.model_file_edit.setText(jiling_model_path)
-                self.load_model()
-            else:
-                # 检查默认模型是否存在
-                default_model_path = "models/clothing_classifier.pth"
-                default_model_full_path = os.path.join(project_root, default_model_path)
-                if os.path.exists(default_model_full_path):
-                    self.model_file_edit.setText(default_model_path)
+
+            # 定义可能的模型路径和优先级
+            possible_models = [
+                # 优先使用最新的JiLing训练模型
+                ("models/JiLing_baiditu_1755873239.pth", "最新训练的JiLing模型"),
+                # 其他可能的JiLing模型（按时间戳降序）
+                ("models/JiLing_baiditu_1755749592.pth", "JiLing训练模型"),
+                # saved_models目录中的最佳模型
+                ("models/saved_models/best_model.pth", "最佳训练模型"),
+                # 默认模型
+                ("models/clothing_classifier.pth", "默认分类模型"),
+                # 演示模型
+                ("models/demo_model.pth", "演示模型")
+            ]
+
+            # 查找存在的模型文件
+            for model_path, model_desc in possible_models:
+                model_full_path = os.path.join(project_root, model_path)
+                if os.path.exists(model_full_path):
+                    print(f"找到模型文件: {model_path} ({model_desc})")
+                    self.model_file_edit.setText(model_path)
                     self.load_model()
-                else:
-                    # 使用demo模型
-                    demo_model_path = "models/demo_model.pth"
-                    demo_model_full_path = os.path.join(project_root, demo_model_path)
-                    if os.path.exists(demo_model_full_path):
-                        self.model_file_edit.setText(demo_model_path)
-                        self.load_model()
-                    else:
-                        reply = QMessageBox.question(
-                            self, "创建演示模型",
-                            "未找到默认模型，是否创建演示模型用于测试？",
-                            QMessageBox.Yes | QMessageBox.No
-                        )
-                        if reply == QMessageBox.Yes:
-                            self.create_demo_model()
+                    return
+
+            # 如果没有找到任何模型，询问是否创建演示模型
+            reply = QMessageBox.question(
+                self, "创建演示模型",
+                "未找到任何可用的模型文件，是否创建演示模型用于测试？",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                self.create_demo_model()
         except Exception as e:
             QMessageBox.critical(self, "错误", f"使用默认模型失败: {str(e)}")
     
