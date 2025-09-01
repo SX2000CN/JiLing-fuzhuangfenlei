@@ -19,7 +19,8 @@ from PySide6.QtWidgets import (
     QFileDialog, QProgressBar, QComboBox, QSpinBox, QDoubleSpinBox,
     QCheckBox, QGroupBox, QGridLayout, QListWidget, QListWidgetItem,
     QMessageBox, QSplitter, QFrame, QScrollArea, QTableWidget,
-    QTableWidgetItem, QHeaderView
+    QTableWidgetItem, QHeaderView, QTreeWidget, QTreeWidgetItem,
+    QInputDialog, QDialog
 )
 from PySide6.QtCore import Qt, QThread, QObject, Signal, QTimer, QSize, QSettings
 from PySide6.QtGui import QPixmap, QFont, QIcon, QPalette, QColor
@@ -27,6 +28,19 @@ from PySide6.QtGui import QPixmap, QFont, QIcon, QPalette, QColor
 # 添加项目路径
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+
+# 可选依赖导入
+try:
+    import GPUtil
+    GPU_UTIL_AVAILABLE = True
+except ImportError:
+    GPU_UTIL_AVAILABLE = False
+
+try:
+    import psutil
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
 
 from core.model_factory import ModelFactory
 from core.pytorch_classifier import ClothingClassifier
@@ -552,29 +566,368 @@ class MainWindow(QMainWindow):
             }
         """)
         
-        # 创建中央部件
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        
-        # 创建布局
-        layout = QVBoxLayout(central_widget)
+        # 创建中央布局
+        central_layout = QVBoxLayout()
         
         # 创建标题
         title_label = QLabel("JiLing 服装分类系统")
         title_label.setAlignment(Qt.AlignCenter)
         title_label.setFont(QFont("微软雅黑", 16, QFont.Bold))
         title_label.setStyleSheet("color: #333; margin: 10px; padding: 10px;")
-        layout.addWidget(title_label)
+        central_layout.addWidget(title_label)
         
         # 创建选项卡
         self.tab_widget = QTabWidget()
-        layout.addWidget(self.tab_widget)
+        central_layout.addWidget(self.tab_widget)
         
         # 创建各个选项卡
         self.create_classification_tab()
         self.create_training_tab()
         self.create_model_tab()
-        self.create_settings_tab()
+        
+        # 设置中央布局
+        central_widget = QWidget()
+        central_widget.setLayout(central_layout)
+        self.setCentralWidget(central_widget)
+        
+        # 创建底部状态栏和设置按钮
+        self.create_bottom_bar()
+        
+        # 初始化系统状态组件
+        self._init_system_status_components()
+        
+        # 更新系统状态
+        self.update_system_status()
+        
+        # 加载自动加载设置
+        self._load_auto_load_settings()
+        
+        # 启动时自动加载模型
+        self._auto_load_model_on_startup()
+        
+    def create_bottom_bar(self):
+        """创建底部状态栏和设置按钮"""
+        # 创建状态栏
+        self.status_bar = self.statusBar()
+        
+        # 创建设置按钮
+        self.settings_button = QPushButton("⚙️ 设置")
+        self.settings_button.setFixedSize(80, 30)
+        self.settings_button.setStyleSheet("""
+            QPushButton {
+                background-color: #4a90e2;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #357abd;
+            }
+            QPushButton:pressed {
+                background-color: #2968a3;
+            }
+        """)
+        self.settings_button.clicked.connect(self.show_settings_dialog)
+        
+        # 将设置按钮添加到状态栏右侧
+        self.status_bar.addPermanentWidget(self.settings_button)
+        
+        # 添加一些状态信息
+        self.status_label = QLabel("就绪")
+        self.status_bar.addWidget(self.status_label)
+        
+    def _init_system_status_components(self):
+        """初始化系统状态组件"""
+        # 创建系统状态文本框
+        self.system_status_text = QTextEdit()
+        self.system_status_text.setReadOnly(True)
+        self.system_status_text.setMaximumHeight(120)
+        # 注意：这个组件不会被添加到UI中，但会在update_system_status中使用
+        
+        # 创建配置编辑器组件（用于配置管理功能）
+        self.config_edit = QTextEdit()
+        self.config_edit.setFont(QFont("Consolas", 10))
+        # 注意：这个组件不会被添加到UI中，但会在配置管理方法中使用
+        
+    def show_settings_dialog(self):
+        """显示设置对话框"""
+        if not hasattr(self, 'settings_dialog'):
+            self.create_settings_dialog()
+        self.settings_dialog.show()
+        self.settings_dialog.raise_()
+        self.settings_dialog.activateWindow()
+        
+    def create_settings_dialog(self):
+        """创建设置对话框"""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QComboBox, QPushButton, QTabWidget
+        
+        self.settings_dialog = QDialog(self)
+        self.settings_dialog.setWindowTitle("系统设置")
+        self.settings_dialog.setModal(True)
+        self.settings_dialog.resize(600, 400)
+        
+        layout = QVBoxLayout(self.settings_dialog)
+        
+        # 创建选项卡
+        tab_widget = QTabWidget()
+        
+        # 基本信息选项卡
+        basic_tab = self._create_basic_info_tab()
+        tab_widget.addTab(basic_tab, "📊 基本信息")
+        
+        # 主题设置选项卡
+        theme_tab = QWidget()
+        theme_layout = QVBoxLayout(theme_tab)
+        
+        theme_group = QGroupBox("主题设置")
+        theme_group_layout = QVBoxLayout(theme_group)
+        
+        # 主题选择
+        theme_select_layout = QHBoxLayout()
+        theme_select_layout.addWidget(QLabel("界面主题:"))
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItems(["浅色主题", "深色主题"])
+        self.theme_combo.setCurrentText("浅色主题")
+        self.theme_combo.currentTextChanged.connect(self._apply_theme)
+        theme_select_layout.addWidget(self.theme_combo)
+        theme_select_layout.addStretch()
+        theme_group_layout.addLayout(theme_select_layout)
+        
+        theme_layout.addWidget(theme_group)
+        theme_layout.addStretch()
+        
+        tab_widget.addTab(theme_tab, "🎨 主题设置")
+        
+        layout.addWidget(tab_widget)
+        
+        # 按钮区域
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        
+        apply_button = QPushButton("应用")
+        apply_button.clicked.connect(self._apply_theme_settings)
+        button_layout.addWidget(apply_button)
+        
+        close_button = QPushButton("关闭")
+        close_button.clicked.connect(self.settings_dialog.close)
+        button_layout.addWidget(close_button)
+        
+        layout.addLayout(button_layout)
+        
+        # 加载当前主题设置
+        self.load_theme_settings()
+        
+    def _apply_theme_settings(self):
+        """应用主题设置"""
+        theme = self.theme_combo.currentText()
+        self._apply_theme(theme)
+        QMessageBox.information(self, "成功", f"主题 '{theme}' 已应用！")
+        
+    def load_theme_settings(self):
+        """加载主题设置"""
+        current_theme = self.settings.value("theme", "浅色主题")
+        self.theme_combo.setCurrentText(current_theme)
+        self._apply_theme(current_theme)
+        
+    def _apply_theme(self, theme):
+        """应用主题"""
+        if theme == "深色主题":
+            self.apply_dark_theme()
+        else:
+            self.apply_light_theme()
+            
+        # 保存设置
+        self.settings.setValue("theme", theme)
+        
+    def apply_light_theme(self):
+        """应用浅色主题"""
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #f5f5f5;
+            }
+            QTabWidget::pane {
+                border: 1px solid #c0c0c0;
+                background-color: white;
+            }
+            QTabBar::tab {
+                background-color: #e0e0e0;
+                padding: 8px 16px;
+                margin: 2px;
+                border-radius: 4px;
+                color: #333333;
+            }
+            QTabBar::tab:selected {
+                background-color: #4a90e2;
+                color: white;
+            }
+            QPushButton {
+                background-color: #4a90e2;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #357abd;
+            }
+            QPushButton:pressed {
+                background-color: #2968a3;
+            }
+            QLabel {
+                color: #333333;
+            }
+            QLineEdit {
+                background-color: white;
+                border: 1px solid #ccc;
+                padding: 5px;
+                border-radius: 3px;
+                color: #333333;
+            }
+            QGroupBox {
+                font-weight: bold;
+                color: #333333;
+                border: 1px solid #ccc;
+                border-radius: 5px;
+                margin: 5px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                color: #333333;
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+            }
+            QTextEdit {
+                background-color: white;
+                color: #333333;
+                border: 1px solid #ccc;
+                border-radius: 3px;
+            }
+            QTableWidget {
+                background-color: white;
+                color: #333333;
+                border: 1px solid #ccc;
+                gridline-color: #ddd;
+            }
+            QTableWidget::item:selected {
+                background-color: #4a90e2;
+                color: white;
+            }
+            QComboBox {
+                background-color: white;
+                color: #333333;
+                border: 1px solid #ccc;
+                padding: 5px;
+                border-radius: 3px;
+            }
+            QSpinBox, QDoubleSpinBox {
+                background-color: white;
+                color: #333333;
+                border: 1px solid #ccc;
+                padding: 5px;
+                border-radius: 3px;
+            }
+            QCheckBox {
+                color: #333333;
+            }
+        """)
+        
+    def apply_dark_theme(self):
+        """应用深色主题"""
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #2b2b2b;
+            }
+            QTabWidget::pane {
+                border: 1px solid #555;
+                background-color: #3a3a3a;
+            }
+            QTabBar::tab {
+                background-color: #4a4a4a;
+                padding: 8px 16px;
+                margin: 2px;
+                border-radius: 4px;
+                color: #ffffff;
+            }
+            QTabBar::tab:selected {
+                background-color: #5a90e2;
+                color: white;
+            }
+            QPushButton {
+                background-color: #5a90e2;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #4a7abd;
+            }
+            QPushButton:pressed {
+                background-color: #3a68a3;
+            }
+            QLabel {
+                color: #ffffff;
+            }
+            QLineEdit {
+                background-color: #4a4a4a;
+                border: 1px solid #666;
+                padding: 5px;
+                border-radius: 3px;
+                color: #ffffff;
+            }
+            QGroupBox {
+                font-weight: bold;
+                color: #ffffff;
+                border: 1px solid #666;
+                border-radius: 5px;
+                margin: 5px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                color: #ffffff;
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+            }
+            QTextEdit {
+                background-color: #4a4a4a;
+                color: #ffffff;
+                border: 1px solid #666;
+                border-radius: 3px;
+            }
+            QTableWidget {
+                background-color: #4a4a4a;
+                color: #ffffff;
+                border: 1px solid #666;
+                gridline-color: #666;
+            }
+            QTableWidget::item:selected {
+                background-color: #5a90e2;
+                color: white;
+            }
+            QComboBox {
+                background-color: #4a4a4a;
+                color: #ffffff;
+                border: 1px solid #666;
+                padding: 5px;
+                border-radius: 3px;
+            }
+            QSpinBox, QDoubleSpinBox {
+                background-color: #4a4a4a;
+                color: #ffffff;
+                border: 1px solid #666;
+                padding: 5px;
+                border-radius: 3px;
+            }
+            QCheckBox {
+                color: #ffffff;
+            }
+        """)
         
     def create_classification_tab(self):
         """创建分类选项卡"""
@@ -691,6 +1044,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(results_group)
         
         self.tab_widget.addTab(tab, "图像分类")
+        
+        return tab
         
     def create_training_tab(self):
         """创建训练选项卡"""
@@ -865,75 +1220,732 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(tab, "模型训练")
         
     def create_model_tab(self):
-        """创建模型管理选项卡"""
+        """创建模型管理选项卡 - 重设计版本"""
+        print("DEBUG: create_model_tab 被调用")
         tab = QWidget()
         layout = QVBoxLayout(tab)
+
+        # 创建分割器
+        splitter = QSplitter(Qt.Horizontal)
+        layout.addWidget(splitter)
+
+        # 左侧面板 - 模型文件管理器
+        left_panel = self._create_model_file_manager()
+        splitter.addWidget(left_panel)
+
+        # 右侧面板 - 模型信息和工具
+        right_panel = self._create_model_info_panel()
+        splitter.addWidget(right_panel)
+
+        # 设置分割器比例
+        splitter.setSizes([400, 600])
+
+        self.tab_widget.addTab(tab, "模型管理")
+
+    def _create_model_file_manager(self):
+        """创建模型文件管理器"""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+
+        # 标题
+        title_label = QLabel("📁 模型文件管理器")
+        title_label.setFont(QFont("微软雅黑", 12, QFont.Bold))
+        layout.addWidget(title_label)
+
+        # 工具栏
+        toolbar = self._create_model_toolbar()
+        layout.addWidget(toolbar)
+
+        # 模型文件树形列表
+        self.model_tree = QTreeWidget()
+        self.model_tree.setHeaderLabels(["文件名", "大小", "修改时间", "状态"])
+        self.model_tree.setColumnWidth(0, 200)
+        self.model_tree.setColumnWidth(1, 80)
+        self.model_tree.setColumnWidth(2, 120)
+        self.model_tree.setColumnWidth(3, 80)
+        self.model_tree.itemDoubleClicked.connect(self._on_model_double_clicked)
+        layout.addWidget(self.model_tree)
+
+        # 刷新按钮
+        refresh_btn = QPushButton("🔄 刷新模型列表")
+        refresh_btn.clicked.connect(self._refresh_model_list)
+        layout.addWidget(refresh_btn)
+
+        # 初始加载模型列表
+        self._refresh_model_list()
+
+        return panel
+
+    def _create_model_toolbar(self):
+        """创建模型管理工具栏"""
+        toolbar = QWidget()
+        layout = QHBoxLayout(toolbar)
+
+        # 加载模型按钮
+        load_btn = QPushButton("📥 加载模型")
+        load_btn.clicked.connect(self._load_selected_model)
+        layout.addWidget(load_btn)
+
+        # 删除模型按钮
+        delete_btn = QPushButton("🗑️ 删除")
+        delete_btn.clicked.connect(self._delete_selected_model)
+        layout.addWidget(delete_btn)
+
+        # 重命名按钮
+        rename_btn = QPushButton("✏️ 重命名")
+        rename_btn.clicked.connect(self._rename_selected_model)
+        layout.addWidget(rename_btn)
+
+        # 导出按钮
+        export_btn = QPushButton("📤 导出")
+        export_btn.clicked.connect(self._export_selected_model)
+        layout.addWidget(export_btn)
+
+        layout.addStretch()
+        return toolbar
+
+    def _create_model_info_panel(self):
+        """创建模型信息面板"""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+
+        # 创建选项卡式信息面板
+        info_tabs = QTabWidget()
+
+        # 基本信息选项卡
+        basic_info_tab = self._create_basic_info_tab()
+        info_tabs.addTab(basic_info_tab, "📊 基本信息")
+
+        # 性能监控选项卡
+        performance_tab = self._create_performance_tab()
+        info_tabs.addTab(performance_tab, "⚡ 性能监控")
+
+        # 优化工具选项卡
+        optimization_tab = self._create_optimization_tab()
+        info_tabs.addTab(optimization_tab, "🔧 优化工具")
+
+        layout.addWidget(info_tabs)
+
+        return panel
+
+    def _create_basic_info_tab(self):
+        """创建基本信息选项卡"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        # 当前模型信息
+        current_model_group = QGroupBox("当前加载模型")
+        current_layout = QVBoxLayout(current_model_group)
+
+        self.current_model_info = QTextEdit()
+        self.current_model_info.setReadOnly(True)
+        self.current_model_info.setMaximumHeight(150)
+        self.current_model_info.setPlainText("未加载模型")
+        current_layout.addWidget(self.current_model_info)
+
+        layout.addWidget(current_model_group)
+
+        # 模型统计信息
+        stats_group = QGroupBox("模型统计")
+        stats_layout = QGridLayout(stats_group)
+
+        self.total_models_label = QLabel("总模型数: 0")
+        self.total_size_label = QLabel("总大小: 0 MB")
+        self.recent_models_label = QLabel("最近使用: 无")
+
+        stats_layout.addWidget(self.total_models_label, 0, 0)
+        stats_layout.addWidget(self.total_size_label, 0, 1)
+        stats_layout.addWidget(self.recent_models_label, 1, 0, 1, 2)
+
+        layout.addWidget(stats_group)
+
+        # 自动加载设置
+        print("DEBUG: 创建自动加载控件")
+        auto_load_group = QGroupBox("自动加载设置")
+        auto_load_layout = QVBoxLayout(auto_load_group)
+
+        # 启用自动加载
+        self.auto_load_checkbox = QCheckBox("启动时自动加载模型")
+        self.auto_load_checkbox.setChecked(True)  # 默认启用
+        self.auto_load_checkbox.stateChanged.connect(self._on_auto_load_changed)
+        auto_load_layout.addWidget(self.auto_load_checkbox)
+
+        # 自动加载模型选择
+        model_select_layout = QHBoxLayout()
+        model_select_layout.addWidget(QLabel("自动加载模型:"))
         
-        # 模型信息
-        info_group = QGroupBox("支持的模型")
-        info_layout = QVBoxLayout(info_group)
+        self.auto_load_model_combo = QComboBox()
+        self.auto_load_model_combo.addItem("最新训练模型", "latest")
+        self.auto_load_model_combo.addItem("最佳性能模型", "best")
+        self.auto_load_model_combo.addItem("指定模型文件", "custom")
+        self.auto_load_model_combo.setCurrentText("最新训练模型")
+        self.auto_load_model_combo.currentTextChanged.connect(self._on_auto_load_model_changed)
+        model_select_layout.addWidget(self.auto_load_model_combo)
+        model_select_layout.addStretch()
+        auto_load_layout.addLayout(model_select_layout)
+
+        # 自定义模型路径（当选择指定模型文件时显示）
+        self.custom_model_widget = QWidget()
+        self.custom_model_layout = QHBoxLayout(self.custom_model_widget)
+        self.custom_model_layout.addWidget(QLabel("模型路径:"))
         
-        factory = ModelFactory()
-        models_text = QTextEdit()
-        models_text.setReadOnly(True)
+        self.custom_model_edit = QLineEdit()
+        self.custom_model_edit.setPlaceholderText("选择模型文件路径...")
+        self.custom_model_layout.addWidget(self.custom_model_edit)
         
-        models_info = "支持的预训练模型:\n\n"
-        for model_name in factory.get_supported_models():
-            models_info += f"• {model_name}\n"
+        custom_browse_btn = QPushButton("浏览")
+        custom_browse_btn.clicked.connect(self._browse_custom_model)
+        self.custom_model_layout.addWidget(custom_browse_btn)
         
-        models_text.setPlainText(models_info)
-        info_layout.addWidget(models_text)
-        
-        layout.addWidget(info_group)
-        
-        # GPU状态
-        gpu_group = QGroupBox("系统状态")
-        gpu_layout = QVBoxLayout(gpu_group)
-        
+        auto_load_layout.addWidget(self.custom_model_widget)
+        self.custom_model_widget.setVisible(False)  # 默认隐藏
+
+        # 保存设置按钮
+        save_auto_load_btn = QPushButton("💾 保存自动加载设置")
+        save_auto_load_btn.clicked.connect(self._save_auto_load_settings)
+        auto_load_layout.addWidget(save_auto_load_btn)
+
+        layout.addWidget(auto_load_group)
+
+        # 系统状态
+        system_group = QGroupBox("系统状态")
+        system_layout = QVBoxLayout(system_group)
+
         self.system_status_text = QTextEdit()
         self.system_status_text.setReadOnly(True)
-        self.update_system_status()
-        gpu_layout.addWidget(self.system_status_text)
-        
-        layout.addWidget(gpu_group)
-        
-        self.tab_widget.addTab(tab, "模型管理")
-        
-    def create_settings_tab(self):
-        """创建设置选项卡"""
+        self.system_status_text.setMaximumHeight(120)
+        system_layout.addWidget(self.system_status_text)
+
+        layout.addWidget(system_group)
+
+        # 支持的模型列表
+        supported_group = QGroupBox("支持的模型类型")
+        supported_layout = QVBoxLayout(supported_group)
+
+        self.supported_models_text = QTextEdit()
+        self.supported_models_text.setReadOnly(True)
+        self._update_supported_models()
+        supported_layout.addWidget(self.supported_models_text)
+
+        layout.addWidget(supported_group)
+
+        return tab
+
+    def _create_performance_tab(self):
+        """创建性能监控选项卡"""
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        
-        # 配置编辑
-        config_group = QGroupBox("配置设置")
-        config_layout = QVBoxLayout(config_group)
-        
-        self.config_edit = QTextEdit()
-        config_layout.addWidget(self.config_edit)
-        
-        # 配置控制
-        config_control_layout = QHBoxLayout()
-        
-        load_config_btn = QPushButton("加载配置")
-        load_config_btn.clicked.connect(self.load_config)
-        config_control_layout.addWidget(load_config_btn)
-        
-        save_config_btn = QPushButton("保存配置")
-        save_config_btn.clicked.connect(self.save_config)
-        config_control_layout.addWidget(save_config_btn)
-        
-        reset_config_btn = QPushButton("重置配置")
-        reset_config_btn.clicked.connect(self.reset_config)
-        config_control_layout.addWidget(reset_config_btn)
-        
-        config_control_layout.addStretch()
-        config_layout.addLayout(config_control_layout)
-        
-        layout.addWidget(config_group)
-        layout.addStretch()
-        
-        self.tab_widget.addTab(tab, "系统设置")
-    
+
+        # 实时性能指标
+        metrics_group = QGroupBox("实时性能指标")
+        metrics_layout = QGridLayout(metrics_group)
+
+        # 推理速度
+        self.inference_speed_label = QLabel("推理速度: -- FPS")
+        self.inference_speed_label.setStyleSheet("font-weight: bold; color: #2e7d32;")
+
+        # 内存使用
+        self.memory_usage_label = QLabel("内存使用: -- MB")
+        self.memory_usage_label.setStyleSheet("font-weight: bold; color: #1976d2;")
+
+        # GPU利用率
+        self.gpu_usage_label = QLabel("GPU利用率: --%")
+        self.gpu_usage_label.setStyleSheet("font-weight: bold; color: #f57c00;")
+
+        # 温度
+        self.temperature_label = QLabel("温度: --°C")
+        self.temperature_label.setStyleSheet("font-weight: bold; color: #d32f2f;")
+
+        metrics_layout.addWidget(self.inference_speed_label, 0, 0)
+        metrics_layout.addWidget(self.memory_usage_label, 0, 1)
+        metrics_layout.addWidget(self.gpu_usage_label, 1, 0)
+        metrics_layout.addWidget(self.temperature_label, 1, 1)
+
+        layout.addWidget(metrics_group)
+
+        # 性能图表区域
+        chart_group = QGroupBox("性能趋势图")
+        chart_layout = QVBoxLayout(chart_group)
+
+        self.performance_chart_placeholder = QLabel("📈 性能图表区域\n(需要matplotlib支持)")
+        self.performance_chart_placeholder.setAlignment(Qt.AlignCenter)
+        self.performance_chart_placeholder.setStyleSheet("""
+            QLabel {
+                background-color: #f5f5f5;
+                border: 2px dashed #ccc;
+                border-radius: 5px;
+                padding: 20px;
+                color: #666;
+            }
+        """)
+        chart_layout.addWidget(self.performance_chart_placeholder)
+
+        layout.addWidget(chart_group)
+
+        # 控制按钮
+        control_layout = QHBoxLayout()
+
+        self.start_monitoring_btn = QPushButton("▶️ 开始监控")
+        self.start_monitoring_btn.clicked.connect(self._start_performance_monitoring)
+        control_layout.addWidget(self.start_monitoring_btn)
+
+        self.stop_monitoring_btn = QPushButton("⏹️ 停止监控")
+        self.stop_monitoring_btn.clicked.connect(self._stop_performance_monitoring)
+        self.stop_monitoring_btn.setEnabled(False)
+        control_layout.addWidget(self.stop_monitoring_btn)
+
+        control_layout.addStretch()
+        layout.addLayout(control_layout)
+
+        return tab
+
+    def _create_optimization_tab(self):
+        """创建优化工具选项卡"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        # 模型优化选项
+        optimization_group = QGroupBox("模型优化工具")
+        optimization_layout = QVBoxLayout(optimization_group)
+
+        # 量化选项
+        quant_layout = QHBoxLayout()
+        quant_layout.addWidget(QLabel("量化精度:"))
+        self.quantization_combo = QComboBox()
+        self.quantization_combo.addItems(["FP32 (原始)", "FP16 (半精度)", "INT8 (量化)"])
+        quant_layout.addWidget(self.quantization_combo)
+
+        quantize_btn = QPushButton("⚡ 量化模型")
+        quantize_btn.clicked.connect(self._quantize_model)
+        quant_layout.addWidget(quantize_btn)
+
+        optimization_layout.addLayout(quant_layout)
+
+        # 导出选项
+        export_layout = QHBoxLayout()
+        export_layout.addWidget(QLabel("导出格式:"))
+        self.export_format_combo = QComboBox()
+        self.export_format_combo.addItems(["ONNX", "TensorRT", "OpenVINO"])
+        export_layout.addWidget(self.export_format_combo)
+
+        export_btn = QPushButton("📤 导出模型")
+        export_btn.clicked.connect(self._export_model)
+        export_layout.addWidget(export_btn)
+
+        optimization_layout.addLayout(export_layout)
+
+        # 压缩选项
+        compress_layout = QHBoxLayout()
+        compress_layout.addWidget(QLabel("压缩级别:"))
+        self.compression_combo = QComboBox()
+        self.compression_combo.addItems(["无压缩", "轻度压缩", "深度压缩"])
+        compress_layout.addWidget(self.compression_combo)
+
+        compress_btn = QPushButton("🗜️ 压缩模型")
+        compress_btn.clicked.connect(self._compress_model)
+        compress_layout.addWidget(compress_btn)
+
+        optimization_layout.addLayout(compress_layout)
+
+        layout.addWidget(optimization_group)
+
+        # 优化结果显示
+        result_group = QGroupBox("优化结果")
+        result_layout = QVBoxLayout(result_group)
+
+        self.optimization_result = QTextEdit()
+        self.optimization_result.setReadOnly(True)
+        self.optimization_result.setMaximumHeight(150)
+        self.optimization_result.setPlainText("优化结果将在这里显示...")
+        result_layout.addWidget(self.optimization_result)
+
+        layout.addWidget(result_group)
+
+        return tab
+
+    def _create_performance_tab(self):
+        """创建性能监控选项卡"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        # 实时性能指标
+        metrics_group = QGroupBox("实时性能指标")
+        metrics_layout = QGridLayout(metrics_group)
+
+        # 推理速度
+        self.inference_speed_label = QLabel("推理速度: -- FPS")
+        self.inference_speed_label.setStyleSheet("font-weight: bold; color: #2e7d32;")
+
+        # 内存使用
+        self.memory_usage_label = QLabel("内存使用: -- MB")
+        self.memory_usage_label.setStyleSheet("font-weight: bold; color: #1976d2;")
+
+        # GPU利用率
+        self.gpu_usage_label = QLabel("GPU利用率: --%")
+        self.gpu_usage_label.setStyleSheet("font-weight: bold; color: #f57c00;")
+
+        # 温度
+        self.temperature_label = QLabel("温度: --°C")
+        self.temperature_label.setStyleSheet("font-weight: bold; color: #d32f2f;")
+
+        metrics_layout.addWidget(self.inference_speed_label, 0, 0)
+        metrics_layout.addWidget(self.memory_usage_label, 0, 1)
+        metrics_layout.addWidget(self.gpu_usage_label, 1, 0)
+        metrics_layout.addWidget(self.temperature_label, 1, 1)
+
+        layout.addWidget(metrics_group)
+
+        # 性能图表区域
+        chart_group = QGroupBox("性能趋势图")
+        chart_layout = QVBoxLayout(chart_group)
+
+        self.performance_chart_placeholder = QLabel("📈 性能图表区域\n(需要matplotlib支持)")
+        self.performance_chart_placeholder.setAlignment(Qt.AlignCenter)
+        self.performance_chart_placeholder.setStyleSheet("""
+            QLabel {
+                background-color: #f5f5f5;
+                border: 2px dashed #ccc;
+                border-radius: 5px;
+                padding: 20px;
+                color: #666;
+            }
+        """)
+        chart_layout.addWidget(self.performance_chart_placeholder)
+
+        layout.addWidget(chart_group)
+
+        # 控制按钮
+        control_layout = QHBoxLayout()
+
+        self.start_monitoring_btn = QPushButton("▶️ 开始监控")
+        self.start_monitoring_btn.clicked.connect(self._start_performance_monitoring)
+        control_layout.addWidget(self.start_monitoring_btn)
+
+        self.stop_monitoring_btn = QPushButton("⏹️ 停止监控")
+        self.stop_monitoring_btn.clicked.connect(self._stop_performance_monitoring)
+        self.stop_monitoring_btn.setEnabled(False)
+        control_layout.addWidget(self.stop_monitoring_btn)
+
+        control_layout.addStretch()
+        layout.addLayout(control_layout)
+
+        return tab
+
+    def _on_auto_load_changed(self):
+        """刷新模型统计信息"""
+        try:
+            models_dir = Path("models")
+            if not models_dir.exists():
+                models_dir.mkdir(exist_ok=True)
+
+            total_size = 0
+            model_count = 0
+
+            for model_file in models_dir.glob("*.pth"):
+                if model_file.is_file():
+                    file_size = model_file.stat().st_size / (1024 * 1024)  # MB
+                    total_size += file_size
+                    model_count += 1
+
+            self.model_count_label.setText(str(model_count))
+            self.total_size_label.setText(".1f")
+
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"刷新统计信息失败: {str(e)}")
+
+    def _on_auto_load_model_changed(self):
+        """打开模型目录"""
+        models_dir = Path("models")
+        if not models_dir.exists():
+            models_dir.mkdir(exist_ok=True)
+
+        import subprocess
+        import platform
+        try:
+            if platform.system() == "Windows":
+                subprocess.run(["explorer", str(models_dir)])
+            elif platform.system() == "Darwin":  # macOS
+                subprocess.run(["open", str(models_dir)])
+            else:  # Linux
+                subprocess.run(["xdg-open", str(models_dir)])
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"无法打开目录: {str(e)}")
+
+    def _browse_custom_model(self):
+        """打开数据目录"""
+        data_dir = Path("data")
+        if not data_dir.exists():
+            data_dir.mkdir(exist_ok=True)
+
+        import subprocess
+        import platform
+        try:
+            if platform.system() == "Windows":
+                subprocess.run(["explorer", str(data_dir)])
+            elif platform.system() == "Darwin":  # macOS
+                subprocess.run(["open", str(data_dir)])
+            else:  # Linux
+                subprocess.run(["xdg-open", str(data_dir)])
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"无法打开目录: {str(e)}")
+
+    def _save_auto_load_settings(self):
+        """打开输出目录"""
+        output_dir = Path("outputs")
+        if not output_dir.exists():
+            output_dir.mkdir(exist_ok=True)
+
+        import subprocess
+        import platform
+        try:
+            if platform.system() == "Windows":
+                subprocess.run(["explorer", str(output_dir)])
+            elif platform.system() == "Darwin":  # macOS
+                subprocess.run(["open", str(output_dir)])
+            else:  # Linux
+                subprocess.run(["xdg-open", str(output_dir)])
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"无法打开目录: {str(e)}")
+
+    def _refresh_model_list(self):
+        """刷新模型文件列表"""
+        try:
+            self.model_tree.clear()
+
+            # 扫描models目录
+            models_dir = Path("models")
+            if not models_dir.exists():
+                models_dir.mkdir(exist_ok=True)
+
+            total_size = 0
+            model_count = 0
+
+            for model_file in models_dir.glob("*.pth"):
+                if model_file.is_file():
+                    # 获取文件信息
+                    file_size = model_file.stat().st_size / (1024 * 1024)  # MB
+                    mod_time = model_file.stat().st_mtime
+                    mod_time_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(mod_time))
+
+                    # 创建树节点
+                    item = QTreeWidgetItem(self.model_tree)
+                    item.setText(0, model_file.name)
+                    item.setText(1, ".1f")
+                    item.setText(2, mod_time_str)
+                    item.setText(3, "可用")
+
+                    # 存储文件路径
+                    item.setData(0, Qt.UserRole, str(model_file))
+
+                    total_size += file_size
+                    model_count += 1
+
+            # 更新统计信息
+            if hasattr(self, 'total_models_label'):
+                self.total_models_label.setText(f"总模型数: {model_count}")
+            if hasattr(self, 'total_size_label'):
+                self.total_size_label.setText(".1f")
+
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"刷新模型列表失败: {str(e)}")
+
+    def _on_model_double_clicked(self, item, column):
+        """双击模型文件时的处理"""
+        if item:
+            model_path = item.data(0, Qt.UserRole)
+            if model_path:
+                self._load_model_from_path(model_path)
+
+    def _load_selected_model(self):
+        """加载选中的模型"""
+        current_item = self.model_tree.currentItem()
+        if current_item:
+            model_path = current_item.data(0, Qt.UserRole)
+            if model_path:
+                self._load_model_from_path(model_path)
+        else:
+            QMessageBox.information(self, "提示", "请先选择一个模型文件")
+
+    def _load_model_from_path(self, model_path):
+        """从指定路径加载模型"""
+        try:
+            self.model_file_edit.setText(model_path)
+            self.load_model()
+            QMessageBox.information(self, "成功", f"模型加载成功: {Path(model_path).name}")
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"加载模型失败: {str(e)}")
+
+    def _delete_selected_model(self):
+        """删除选中的模型"""
+        current_item = self.model_tree.currentItem()
+        if not current_item:
+            QMessageBox.information(self, "提示", "请先选择要删除的模型文件")
+            return
+
+        model_path = current_item.data(0, Qt.UserRole)
+        if not model_path:
+            return
+
+        # 确认删除
+        reply = QMessageBox.question(
+            self, "确认删除",
+            f"确定要删除模型文件吗？\n{Path(model_path).name}\n\n此操作不可恢复！",
+            QMessageBox.Yes | QMessageBox.No
+        )
+
+        if reply == QMessageBox.Yes:
+            try:
+                Path(model_path).unlink()
+                self._refresh_model_list()
+                QMessageBox.information(self, "成功", "模型文件已删除")
+            except Exception as e:
+                QMessageBox.warning(self, "错误", f"删除失败: {str(e)}")
+
+    def _rename_selected_model(self):
+        """重命名选中的模型"""
+        current_item = self.model_tree.currentItem()
+        if not current_item:
+            QMessageBox.information(self, "提示", "请先选择要重命名的模型文件")
+            return
+
+        model_path = current_item.data(0, Qt.UserRole)
+        if not model_path:
+            return
+
+        old_name = Path(model_path).name
+        new_name, ok = QInputDialog.getText(self, "重命名模型", "新文件名:", text=old_name)
+
+        if ok and new_name and new_name != old_name:
+            try:
+                new_path = Path(model_path).parent / new_name
+                if new_path.exists():
+                    QMessageBox.warning(self, "错误", "目标文件名已存在")
+                    return
+
+                Path(model_path).rename(new_path)
+                self._refresh_model_list()
+                QMessageBox.information(self, "成功", "模型文件重命名成功")
+            except Exception as e:
+                QMessageBox.warning(self, "错误", f"重命名失败: {str(e)}")
+
+    def _export_selected_model(self):
+        """导出选中的模型"""
+        current_item = self.model_tree.currentItem()
+        if not current_item:
+            QMessageBox.information(self, "提示", "请先选择要导出的模型文件")
+            return
+
+        model_path = current_item.data(0, Qt.UserRole)
+        if not model_path:
+            return
+
+        # 选择导出路径
+        export_path, _ = QFileDialog.getSaveFileName(
+            self, "导出模型", "", "PyTorch模型 (*.pth);;所有文件 (*)"
+        )
+
+        if export_path:
+            try:
+                import shutil
+                shutil.copy2(model_path, export_path)
+                QMessageBox.information(self, "成功", f"模型已导出到: {export_path}")
+            except Exception as e:
+                QMessageBox.warning(self, "错误", f"导出失败: {str(e)}")
+
+    def _update_supported_models(self):
+        """更新支持的模型列表"""
+        try:
+            from core.model_factory import ModelFactory
+            factory = ModelFactory()
+
+            models_info = "🎯 支持的预训练模型架构:\n\n"
+            for model_name in factory.get_supported_models():
+                models_info += f"• {model_name}\n"
+
+            models_info += "\n💡 提示: 不同模型在准确率和速度之间有权衡"
+            self.supported_models_text.setPlainText(models_info)
+        except Exception as e:
+            self.supported_models_text.setPlainText(f"加载模型信息失败: {str(e)}")
+
+    def _start_performance_monitoring(self):
+        """开始性能监控"""
+        self.start_monitoring_btn.setEnabled(False)
+        self.stop_monitoring_btn.setEnabled(True)
+
+        # 这里可以启动定时器来更新性能指标
+        if not hasattr(self, 'performance_timer'):
+            self.performance_timer = QTimer()
+            self.performance_timer.timeout.connect(self._update_performance_metrics)
+
+        self.performance_timer.start(1000)  # 每秒更新一次
+        QMessageBox.information(self, "提示", "性能监控已启动")
+
+    def _stop_performance_monitoring(self):
+        """停止性能监控"""
+        self.start_monitoring_btn.setEnabled(True)
+        self.stop_monitoring_btn.setEnabled(False)
+
+        if hasattr(self, 'performance_timer'):
+            self.performance_timer.stop()
+
+        QMessageBox.information(self, "提示", "性能监控已停止")
+
+    def _update_performance_metrics(self):
+        """更新性能指标"""
+        try:
+            import torch
+
+            # GPU信息
+            if torch.cuda.is_available():
+                if GPU_UTIL_AVAILABLE:
+                    gpu = GPUtil.getGPUs()[0]
+                    self.gpu_usage_label.setText(".1f")
+                    self.temperature_label.setText(f"温度: {gpu.temperature}°C")
+                else:
+                    self.gpu_usage_label.setText("GPU利用率: 需要GPUtil")
+                    self.temperature_label.setText("温度: 需要GPUtil")
+
+                # 内存使用
+                memory_allocated = torch.cuda.memory_allocated() / 1024 / 1024  # MB
+                self.memory_usage_label.setText(".1f")
+            else:
+                self.gpu_usage_label.setText("GPU利用率: N/A")
+                self.temperature_label.setText("温度: N/A")
+                self.memory_usage_label.setText("内存使用: N/A")
+
+            # CPU信息
+            if PSUTIL_AVAILABLE:
+                cpu_percent = psutil.cpu_percent()
+                memory_percent = psutil.virtual_memory().percent
+            else:
+                cpu_percent = 0
+                memory_percent = 0
+
+            # 这里可以显示推理速度等指标
+            # 暂时显示占位符
+            self.inference_speed_label.setText("推理速度: -- FPS")
+
+        except Exception as e:
+            print(f"更新性能指标失败: {e}")
+            self.inference_speed_label.setText("推理速度: 错误")
+            self.memory_usage_label.setText("内存使用: 错误")
+            self.gpu_usage_label.setText("GPU利用率: 错误")
+            self.temperature_label.setText("温度: 错误")
+
+    def _quantize_model(self):
+        """量化模型"""
+        QMessageBox.information(self, "提示", "模型量化功能正在开发中...\n\n此功能将支持:\n• FP16半精度量化\n• INT8量化\n• 动态量化")
+
+    def _export_model(self):
+        """导出模型"""
+        export_format = self.export_format_combo.currentText()
+        QMessageBox.information(self, "提示", f"{export_format}导出功能正在开发中...\n\n此功能将支持:\n• ONNX格式导出\n• TensorRT优化\n• OpenVINO部署")
+
+    def _compress_model(self):
+        """压缩模型"""
+        compression_level = self.compression_combo.currentText()
+        QMessageBox.information(self, "提示", f"{compression_level}功能正在开发中...\n\n此功能将支持:\n• 模型权重压缩\n• 结构化剪枝\n• 知识蒸馏")
+
     def load_config(self):
         """加载配置"""
         try:
@@ -963,13 +1975,31 @@ class MainWindow(QMainWindow):
     def reset_config(self):
         """重置配置"""
         default_config = {
-            "model_name": "tf_efficientnetv2_s",
-            "num_classes": 3,
-            "class_names": ["主图", "细节", "吊牌"],
-            "input_size": [224, 224],
-            "device": "auto",
-            "model_path": "models/JiLing_baiditu_1755873239.pth",
-            "image_extensions": [".jpg", ".jpeg", ".png", ".bmp", ".tiff"]
+            "model_config": {
+                "model_name": "tf_efficientnetv2_s",
+                "model_path": "models/JiLing_baiditu_1755873239.pth",
+                "num_classes": 3,
+                "input_size": 384
+            },
+            "paths": {
+                "input_folder": "data/test",
+                "output_folder": "outputs",
+                "log_folder": "logs"
+            },
+            "classification": {
+                "batch_size": 32,
+                "confidence_threshold": 0.5,
+                "classes": ["主图", "细节", "吊牌"]
+            },
+            "processing": {
+                "move_files": True,
+                "save_statistics": True,
+                "create_subfolders": True
+            },
+            "device": {
+                "preferred": "auto",
+                "fallback": "cpu"
+            }
         }
         self.config_edit.setPlainText(json.dumps(default_config, indent=2, ensure_ascii=False))
     
@@ -1511,6 +2541,137 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
         timestamp = datetime.now().strftime("%H:%M:%S")
         log_entry = f"[{timestamp}] {message}"
         self.train_log.append(log_entry)
+    
+    def _on_auto_load_changed(self, state):
+        """自动加载设置改变"""
+        enabled = state == Qt.Checked
+        self.auto_load_model_combo.setEnabled(enabled)
+        self.custom_model_edit.setEnabled(enabled)
+        
+        if hasattr(self, 'custom_model_widget'):
+            # 只有当选择自定义模型时才显示自定义路径
+            if enabled and self.auto_load_model_combo.currentData() == "custom":
+                self.custom_model_widget.setVisible(True)
+            else:
+                self.custom_model_widget.setVisible(False)
+    
+    def _on_auto_load_model_changed(self, text):
+        """自动加载模型选择改变"""
+        model_type = self.auto_load_model_combo.currentData()
+        if model_type == "custom":
+            self.custom_model_widget.setVisible(True)
+        else:
+            self.custom_model_widget.setVisible(False)
+    
+    def _browse_custom_model(self):
+        """浏览自定义模型文件"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择模型文件", "", "PyTorch模型文件 (*.pth);;所有文件 (*)"
+        )
+        if file_path:
+            self.custom_model_edit.setText(file_path)
+    
+    def _save_auto_load_settings(self):
+        """保存自动加载设置"""
+        try:
+            settings = {
+                'auto_load_enabled': self.auto_load_checkbox.isChecked(),
+                'auto_load_model_type': self.auto_load_model_combo.currentData(),
+                'custom_model_path': self.custom_model_edit.text().strip()
+            }
+            
+            # 保存到QSettings
+            self.settings.setValue("auto_load_enabled", settings['auto_load_enabled'])
+            self.settings.setValue("auto_load_model_type", settings['auto_load_model_type'])
+            self.settings.setValue("custom_model_path", settings['custom_model_path'])
+            
+            QMessageBox.information(self, "成功", "自动加载设置已保存！")
+            
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"保存设置失败: {str(e)}")
+    
+    def _load_auto_load_settings(self):
+        """加载自动加载设置"""
+        try:
+            # 检查控件是否已创建
+            if not hasattr(self, 'auto_load_checkbox'):
+                print("自动加载控件尚未创建，跳过设置加载")
+                print("调试信息: 检查对象属性...")
+                attrs = [attr for attr in dir(self) if 'auto' in attr.lower()]
+                print(f"包含'auto'的属性: {attrs}")
+                return
+            
+            # 从QSettings加载设置
+            auto_load_enabled = self.settings.value("auto_load_enabled", True, type=bool)
+            auto_load_model_type = self.settings.value("auto_load_model_type", "latest")
+            custom_model_path = self.settings.value("custom_model_path", "")
+            
+            # 应用设置到UI
+            self.auto_load_checkbox.setChecked(auto_load_enabled)
+            self.auto_load_model_combo.setCurrentText(
+                "最新训练模型" if auto_load_model_type == "latest" else
+                "最佳性能模型" if auto_load_model_type == "best" else
+                "指定模型文件"
+            )
+            self.custom_model_edit.setText(custom_model_path)
+            
+            # 根据设置调整UI状态
+            self._on_auto_load_changed(Qt.Checked if auto_load_enabled else Qt.Unchecked)
+            
+        except Exception as e:
+            print(f"加载自动加载设置失败: {e}")
+    
+    def _auto_load_model_on_startup(self):
+        """启动时自动加载模型"""
+        try:
+            print("DEBUG: 开始执行自动加载")
+            # 检查控件是否已创建
+            if not hasattr(self, 'auto_load_checkbox'):
+                print("自动加载控件尚未创建，跳过自动加载")
+                return
+            
+            if not self.auto_load_checkbox.isChecked():
+                print("自动加载未启用")
+                return
+            
+            model_type = self.auto_load_model_combo.currentData()
+            print(f"DEBUG: 自动加载模型类型: {model_type}")
+            
+            if model_type == "latest":
+                print("DEBUG: 调用 use_default_model()")
+                # 自动加载最新训练的模型
+                self.use_default_model()
+                print(f"DEBUG: use_default_model() 执行完成, 分类器状态: {self.current_classifier is not None}")
+            elif model_type == "best":
+                # 自动加载最佳性能模型
+                self._load_best_model()
+            elif model_type == "custom":
+                # 自动加载指定模型
+                custom_path = self.custom_model_edit.text().strip()
+                if custom_path and os.path.exists(custom_path):
+                    self.model_file_edit.setText(custom_path)
+                    self.load_model()
+                    
+        except Exception as e:
+            print(f"自动加载模型失败: {e}")
+    
+    def _load_best_model(self):
+        """加载最佳性能模型"""
+        try:
+            # 查找最佳模型（这里可以根据验证准确率或其他指标选择）
+            models_dir = Path("models")
+            if not models_dir.exists():
+                return
+            
+            # 简单策略：选择最新的模型作为"最佳"模型
+            model_files = list(models_dir.glob("*.pth"))
+            if model_files:
+                best_model = max(model_files, key=lambda x: x.stat().st_mtime)
+                self.model_file_edit.setText(str(best_model))
+                self.load_model()
+                
+        except Exception as e:
+            print(f"加载最佳模型失败: {e}")
 
 
 def main():

@@ -53,6 +53,7 @@ test_config.json
 
 # Conda环境
 .conda/
+JiLing-fuzhuangfenlei-env/
 
 # 测试文件
 memory_test.py
