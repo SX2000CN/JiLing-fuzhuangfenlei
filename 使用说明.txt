@@ -1,0 +1,8 @@
+gui程序：
+
+python gui_launcher.py
+
+纯脚本：
+
+python classify_cli.py
+
