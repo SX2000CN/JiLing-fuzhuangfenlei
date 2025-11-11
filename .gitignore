@@ -46,6 +46,16 @@ Thumbs.db
 # 临时文件
 *.tmp
 *.temp
+temp/
+fast_classify.log
+
+# 构建文件
+build/
+dist/
+*.spec
+
+# 测试文件
+tests/__pycache__/
 
 # 配置文件（包含敏感信息的）
 config/local_config.json
