@@ -9,6 +9,7 @@ import os
 import json
 import time
 import torch
+import argparse
 from pathlib import Path
 from typing import List
 from PIL import Image
@@ -16,7 +17,7 @@ from tqdm import tqdm
 import concurrent.futures
 
 # 添加项目路径
-project_root = Path(__file__).parent
+project_root = Path(__file__).parent.parent  # 返回到项目根目录
 sys.path.insert(0, str(project_root))
 
 try:
@@ -32,7 +33,7 @@ except ImportError as e:
 class CommandLineClassifier:
     """命令行分类器"""
     
-    def __init__(self):
+    def __init__(self, no_pause=False):
         # 创建QApplication（必需，即使不显示GUI）
         self.app = QApplication.instance()
         if self.app is None:
@@ -41,6 +42,7 @@ class CommandLineClassifier:
         # 初始化设置
         self.settings = QSettings("JiLing", "ClothingClassifier")
         self.classifier = None
+        self.no_pause = no_pause  # 是否跳过等待
         
     def load_gui_settings(self):
         """加载GUI中保存的设置"""
@@ -355,6 +357,10 @@ class CommandLineClassifier:
     
     def wait_for_exit(self):
         """等待用户按回车退出"""
+        if self.no_pause:
+            print("👋 再见!")
+            return
+        
         print("\n💡 按回车键退出...")
         try:
             input()
@@ -365,18 +371,25 @@ class CommandLineClassifier:
 
 def main():
     """主函数"""
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description='JiLing服装分类系统 - 命令行版本')
+    parser.add_argument('--no-pause', action='store_true', 
+                       help='完成后不等待用户按键（用于bat脚本调用）')
+    args = parser.parse_args()
+    
     try:
-        classifier = CommandLineClassifier()
+        classifier = CommandLineClassifier(no_pause=args.no_pause)
         classifier.run()
     except KeyboardInterrupt:
         print("\n👋 用户取消，再见!")
     except Exception as e:
         print(f"\n❌ 程序异常: {e}")
-        print("💡 按回车键退出...")
-        try:
-            input()
-        except KeyboardInterrupt:
-            pass
+        if not args.no_pause:
+            print("💡 按回车键退出...")
+            try:
+                input()
+            except KeyboardInterrupt:
+                pass
 
 
 if __name__ == "__main__":
