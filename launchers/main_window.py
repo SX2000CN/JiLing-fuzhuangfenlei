@@ -945,7 +945,7 @@ class MainWindow(QMainWindow):
             else:
                 self.config_edit.setPlainText("配置文件不存在")
         except Exception as e:
-            QMessageBox.warning(self, "错误", f"加载配置失败: {str(e)}")
+            self.show_message("错误", f"加载配置失败: {str(e)}", QMessageBox.Warning)
     
     def save_config(self):
         """保存配置"""
@@ -956,9 +956,9 @@ class MainWindow(QMainWindow):
             with open("config.json", 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=2, ensure_ascii=False)
                 
-            QMessageBox.information(self, "成功", "配置保存成功！")
+            self.show_message("成功", "配置保存成功！", QMessageBox.Information)
         except Exception as e:
-            QMessageBox.warning(self, "错误", f"保存配置失败: {str(e)}")
+            self.show_message("错误", f"保存配置失败: {str(e)}", QMessageBox.Warning)
     
     def reset_config(self):
         """重置配置"""
@@ -1011,9 +1011,9 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
         last_folder = self.settings.value("last_classification_folder", "")
         if last_folder and os.path.exists(last_folder):
             self.folder_edit.setText(last_folder)
-            QMessageBox.information(self, "路径已设置", f"已设置为上次使用的路径:\n{last_folder}")
+            self.show_message("路径已设置", f"已设置为上次使用的路径:\n{last_folder}", QMessageBox.Information)
         else:
-            QMessageBox.warning(self, "路径不存在", "上次使用的路径不存在或未设置")
+            self.show_message("路径不存在", "上次使用的路径不存在或未设置", QMessageBox.Warning)
     
     def browse_folder(self):
         """浏览文件夹"""
@@ -1087,7 +1087,7 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
         """加载模型"""
         model_path = self.model_file_edit.text().strip()
         if not model_path:
-            QMessageBox.warning(self, "警告", "请选择模型文件！")
+            self.show_message("警告", "请选择模型文件！", QMessageBox.Warning)
             return
         
         # 处理相对路径
@@ -1097,7 +1097,7 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
             model_path = os.path.join(project_root, model_path)
         
         if not os.path.exists(model_path):
-            QMessageBox.warning(self, "警告", f"模型文件不存在：{model_path}")
+            self.show_message("警告", f"模型文件不存在：{model_path}", QMessageBox.Warning)
             return
         
         try:
@@ -1137,13 +1137,13 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
             self.model_status_label.setText(f"状态: 已加载 {os.path.basename(model_path)}")
             self.model_status_label.setStyleSheet("color: #28a745; font-weight: bold;")
             
-            QMessageBox.information(self, "成功", f"模型加载成功！\n{os.path.basename(model_path)}")
+            self.show_message("成功", f"模型加载成功！\n{os.path.basename(model_path)}", QMessageBox.Information)
             
         except Exception as e:
             self.model_status_label.setText("状态: 模型加载失败")
             self.model_status_label.setStyleSheet("color: #dc3545; font-style: italic;")
             self.current_classifier = None
-            QMessageBox.critical(self, "错误", f"模型加载失败: {str(e)}")
+            self.show_message("错误", f"模型加载失败: {str(e)}", QMessageBox.Critical)
     
     def use_default_model(self):
         """使用默认模型"""
@@ -1175,15 +1175,11 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
                     return
 
             # 如果没有找到任何模型，询问是否创建演示模型
-            reply = QMessageBox.question(
-                self, "创建演示模型",
-                "未找到任何可用的模型文件，是否创建演示模型用于测试？",
-                QMessageBox.Yes | QMessageBox.No
-            )
+            reply = self.show_question("创建演示模型", "未找到任何可用的模型文件，是否创建演示模型用于测试？")
             if reply == QMessageBox.Yes:
                 self.create_demo_model()
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"使用默认模型失败: {str(e)}")
+            self.show_message("错误", f"使用默认模型失败: {str(e)}", QMessageBox.Critical)
     
     def create_demo_model(self):
         """创建演示模型"""
@@ -1211,7 +1207,77 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
             self.load_model()
             
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"创建演示模型失败: {str(e)}")
+            self.show_message("错误", f"创建演示模型失败: {str(e)}", QMessageBox.Critical)
+    
+    def show_message(self, title, message, icon=QMessageBox.Information):
+        """显示优化后的消息框，文字颜色清晰可见"""
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle(title)
+        msg_box.setText(message)
+        msg_box.setIcon(icon)
+        
+        # 设置样式表，确保文字清晰可见
+        msg_box.setStyleSheet("""
+            QMessageBox {
+                background-color: #ffffff;
+            }
+            QMessageBox QLabel {
+                color: #000000;
+                font-size: 14px;
+                min-width: 300px;
+            }
+            QPushButton {
+                background-color: #4a90e2;
+                color: white;
+                border: none;
+                padding: 8px 20px;
+                border-radius: 4px;
+                font-weight: bold;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #357abd;
+            }
+            QPushButton:pressed {
+                background-color: #2968a3;
+            }
+        """)
+        
+        return msg_box.exec()
+    
+    def show_question(self, title, message):
+        """显示优化后的询问对话框"""
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle(title)
+        msg_box.setText(message)
+        msg_box.setIcon(QMessageBox.Question)
+        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        
+        # 设置样式表
+        msg_box.setStyleSheet("""
+            QMessageBox {
+                background-color: #ffffff;
+            }
+            QMessageBox QLabel {
+                color: #000000;
+                font-size: 14px;
+                min-width: 300px;
+            }
+            QPushButton {
+                background-color: #4a90e2;
+                color: white;
+                border: none;
+                padding: 8px 20px;
+                border-radius: 4px;
+                font-weight: bold;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #357abd;
+            }
+        """)
+        
+        return msg_box.exec()
     
     def load_remembered_paths(self):
         """加载记忆的路径"""
@@ -1289,18 +1355,14 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
         print(f"找到图像文件数量: {len(image_paths)}")  # 调试信息
         
         if not image_paths:
-            QMessageBox.warning(self, "警告", "请选择要分类的图像文件或文件夹！")
+            self.show_message("警告", "请选择要分类的图像文件或文件夹！", QMessageBox.Warning)
             return
         
         # 检查是否有加载的模型
         print(f"当前分类器状态: {self.current_classifier}")  # 调试信息
         if self.current_classifier is None:
             print("分类器为空，询问是否使用默认模型")  # 调试信息
-            reply = QMessageBox.question(
-                self, "未加载模型",
-                "未检测到已加载的模型，是否使用默认模型？",
-                QMessageBox.Yes | QMessageBox.No
-            )
+            reply = self.show_question("未加载模型", "未检测到已加载的模型，是否使用默认模型？")
             if reply == QMessageBox.Yes:
                 print("用户选择使用默认模型")  # 调试信息
                 self.use_default_model()
@@ -1395,7 +1457,7 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
         # 检查数据路径
         data_path = self.data_path_edit.text().strip()
         if not data_path or not os.path.exists(data_path):
-            QMessageBox.warning(self, "警告", "请选择有效的训练数据路径！")
+            self.show_message("警告", "请选择有效的训练数据路径！", QMessageBox.Warning)
             return
         
         # 检查基础模型路径（如果需要）
@@ -1404,7 +1466,7 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
         
         if train_mode != "从预训练权重开始":
             if not base_model_path or not os.path.exists(base_model_path):
-                QMessageBox.warning(self, "警告", "请选择有效的基础模型文件！")
+                self.show_message("警告", "请选择有效的基础模型文件！", QMessageBox.Warning)
                 return
         
         # 准备训练配置
@@ -1497,9 +1559,9 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
         
         # 显示消息
         if success:
-            QMessageBox.information(self, "训练完成", message)
+            self.show_message("训练完成", message, QMessageBox.Information)
         else:
-            QMessageBox.warning(self, "训练失败", message)
+            self.show_message("训练失败", message, QMessageBox.Warning)
         
         # 清理线程
         if self.training_thread:

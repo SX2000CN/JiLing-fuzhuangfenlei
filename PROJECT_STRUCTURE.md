@@ -4,44 +4,31 @@
 
 ```
 JiLing-fuzhuangfenlei/
-├── launchers/              # 启动器目录
-│   ├── launch.py           # 统一启动器 (支持现代/传统界面)
-│   ├── modern_gui_main.py  # 现代化界面 (Ant Design 风格)
-│   ├── gui_main.py         # 传统界面
-│   ├── 启动器.bat           # 批处理启动菜单
-│   ├── 快速启动-现代界面.bat
-│   ├── 快速启动-传统界面.bat
-│   ├── 测试环境.bat
-│   └── run_classify.bat
-│
 ├── src/                    # 源代码
 │   ├── core/              # 核心功能
 │   │   ├── model_factory.py      # 模型工厂
 │   │   ├── pytorch_classifier.py # PyTorch 分类器
 │   │   └── pytorch_trainer.py    # 训练器
 │   ├── gui/               # GUI 组件
-│   │   └── main_window.py
+│   │   ├── main_window.py        # 传统界面
+│   │   └── native_ui.py          # 新界面 (VS Code 风格) ⭐
 │   └── utils/             # 工具函数
 │       ├── config_manager.py
 │       ├── image_utils.py
 │       └── logging_utils.py
 │
-├── web-frontend/          # Web 前端 (React + TypeScript + Ant Design)
-│   ├── src/
-│   │   ├── components/   # React 组件
-│   │   ├── pages/        # 页面
-│   │   ├── services/     # API 服务
-│   │   └── store/        # 状态管理
-│   └── package.json
+├── launchers/              # 启动器目录
+│   ├── launch.py           # 统一启动器
+│   ├── gui_main.py         # 传统界面启动
+│   ├── gui_launcher.py     # 通用启动器
+│   ├── classify_cli.py     # 命令行分类工具
+│   ├── run_classify.bat    # 批处理分类
+│   └── 快速启动-传统界面.bat
 │
 ├── scripts/               # 脚本工具
 │   └── fast_classify.py  # 快速分类脚本
 │
 ├── tests/                 # 测试文件
-│   ├── test_model_finding.py
-│   ├── memory_test.py
-│   ├── interactive_test.py
-│   └── create_demo_model.py
 │
 ├── docs/                  # 文档
 │   ├── 启动说明.md
@@ -50,14 +37,10 @@ JiLing-fuzhuangfenlei/
 │   ├── 项目完整文档.md
 │   └── PyTorch升级方案.md
 │
-├── build/                 # 构建工具
-│   ├── make_installer.bat
-│   ├── project_cleanup.bat
-│   └── 分类测试整理.bat
-│
-├── temp/                  # 临时文件
-│   ├── fix_text.py
-│   └── fast_classify.log
+├── .github/               # GitHub 配置
+│   └── instructions/      # 开发规范
+│       ├── 系统设计规范.md      # VS Code 设计系统参考
+│       └── 回复永远使用中文.md
 │
 ├── config/                # 配置文件
 │   ├── model_config.yaml
@@ -74,63 +57,72 @@ JiLing-fuzhuangfenlei/
 │   ├── checkpoints/      # 检查点
 │   └── exports/          # 导出的模型
 │
+├── MiSans/                # MiSans 字体资源
+│
 ├── outputs/               # 输出结果
 ├── logs/                  # 日志文件
+├── build/                 # 构建输出
 │
-├── api_server.py          # API 服务器
-├── api_requirements.txt   # API 依赖
-├── web_shell.py           # Web 外壳 (QtWebEngine)
-├── classify_cli.py        # 命令行分类工具
 ├── config.json            # 主配置文件
 ├── requirements.txt       # Python 依赖
 ├── README.md              # 项目说明
 ├── LICENSE.txt            # 许可证
-└── start.bat              # 主启动入口 ⭐
+├── start.bat              # 主启动入口
+├── 启动-新界面.bat         # 新界面启动器 ⭐
+└── 启动-传统界面.bat       # 传统界面启动器
 ```
 
 ## 快速开始
 
-### 方式 1: 使用主启动器 (推荐)
-双击 `start.bat`，选择启动方式
+### 方式 1: 启动新界面 (推荐)
+双击 `启动-新界面.bat`
 
-### 方式 2: 直接启动
-- 现代界面: `launchers\快速启动-现代界面.bat`
-- 传统界面: `launchers\快速启动-传统界面.bat`
-- 命令行工具: `launchers\run_classify.bat`
+### 方式 2: 启动传统界面
+双击 `启动-传统界面.bat`
 
 ### 方式 3: Python 直接运行
 ```bash
-# 现代界面
-python launchers/launch.py --mode modern
+# 新界面 (VS Code 风格)
+python src/gui/native_ui.py
 
 # 传统界面
-python launchers/launch.py --mode traditional
+python launchers/gui_main.py
 
 # 命令行分类
-python classify_cli.py
+python launchers/classify_cli.py
 ```
 
-## 主要组件
+## 界面说明
 
-### 1. 启动系统
-- **launch.py**: 统一启动器，支持自动进程清理
-- **modern_gui_main.py**: 现代化界面 (Ant Design 风格)
-- **gui_main.py**: 传统 PySide6 界面
+### 新界面 (native_ui.py)
+- 基于 VS Code 设计系统
+- 使用 MiSans 字体
+- iOS 风格超椭圆圆角
+- 现代化参数面板
+- 终端式输出区域
 
-### 2. Web 系统
-- **web-frontend/**: React + TypeScript + Ant Design 前端
-- **api_server.py**: FastAPI 后端服务
-- **web_shell.py**: Qt WebEngine 桌面包装器
+### 传统界面 (main_window.py)
+- 经典 Tab 标签页布局
+- 完整的训练和分类功能
+- 兼容性更好
 
-### 3. 核心功能
-- **src/core/**: 模型训练、分类核心逻辑
-- **src/utils/**: 工具函数 (图像处理、配置管理、日志)
+## 核心功能
+
+### 模型训练
+- 支持多种预训练模型 (EfficientNet, ResNet, ViT)
+- 可配置训练参数 (轮数、批次、学习率)
+- 实时训练日志输出
+
+### 图像分类
+- 批量图像分类
+- 支持多种图像格式
+- 分类结果导出
 
 ## 环境要求
 
 - Python 3.11+
 - PySide6 6.10.0+
 - PyTorch (CPU/CUDA)
-- Node.js 16+ (Web 前端)
+- timm (模型库)
 
-详见 `requirements.txt` 和 `api_requirements.txt`
+详见 `requirements.txt`

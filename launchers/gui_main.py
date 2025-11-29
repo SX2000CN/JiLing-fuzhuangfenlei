@@ -16,26 +16,23 @@ def main():
             # 如果是打包后的可执行文件
             application_path = Path(sys.executable).parent
         else:
-            # 如果是源码运行
-            application_path = Path(__file__).parent
+            # 如果是源码运行，返回到项目根目录
+            application_path = Path(__file__).parent.parent
+        
+        # 添加项目根路径到系统路径
+        sys.path.insert(0, str(application_path))
         
         # 添加src路径到系统路径
         src_path = application_path / "src"
         if src_path.exists():
             sys.path.insert(0, str(src_path))
-        else:
-            # 打包后的结构
-            sys.path.insert(0, str(application_path))
         
         # 导入并启动GUI
         from PySide6.QtWidgets import QApplication
         from PySide6.QtCore import Qt
         
-        # 设置高DPI缩放
-        if hasattr(Qt, 'AA_EnableHighDpiScaling'):
-            QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-        if hasattr(Qt, 'AA_UseHighDpiPixmaps'):
-            QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+        # 设置高DPI缩放（PySide6中这些属性已废弃，Qt6默认启用高DPI）
+        # 在Qt6中，高DPI缩放是默认启用的，不需要手动设置
         
         app = QApplication(sys.argv)
         app.setApplicationName("JiLing服装分类系统")
@@ -46,14 +43,17 @@ def main():
         
         # 导入并创建主窗口
         try:
-            from gui.main_window import MainWindow
+            # 优先使用src.gui路径
+            from src.gui.main_window import MainWindow
         except ImportError:
-            # 尝试备用路径
             try:
-                from src.gui.main_window import MainWindow
-            except ImportError:
-                # 直接从main_window导入
+                # 尝试launchers目录下的main_window
+                launchers_path = Path(__file__).parent
+                sys.path.insert(0, str(launchers_path))
                 from main_window import MainWindow
+            except ImportError:
+                # 最后尝试gui.main_window
+                from gui.main_window import MainWindow
         
         window = MainWindow()
         window.show()
