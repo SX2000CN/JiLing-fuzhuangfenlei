@@ -69,21 +69,21 @@ class TrainingWorker(QObject):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
-                print("🧹 GPU内存已清理")
-            
+                print("[OK] GPU memory cleared")
+
             # 创建训练器
             trainer = ClothingTrainer(**self.trainer_config)
-            
+
             # 构建模型
             self.progress_updated.emit(5, "构建模型中...", {})
             model = trainer.build_model(pretrained=self.training_params.get('pretrained', True))
-            
+
             # 加载基础模型（如果指定）
             base_model_path = self.training_params.get('base_model_path')
             if base_model_path and os.path.exists(base_model_path):
                 self.progress_updated.emit(8, "加载基础模型...", {})
                 trainer.load_model(base_model_path)
-                print(f"✅ 已加载基础模型: {base_model_path}")
+                print(f"[OK] Base model loaded: {base_model_path}")
             
             # 设置优化器
             self.progress_updated.emit(10, "设置优化器...", {})
@@ -112,7 +112,7 @@ class TrainingWorker(QObject):
                     import torch
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
-                        print(f"🧹 Epoch {epoch}: GPU内存已清理")
+                        print(f"[OK] Epoch {epoch}: GPU memory cleared")
                 
                 # 训练一个epoch
                 train_loss, train_acc = trainer.train_epoch(train_loader)
@@ -231,8 +231,8 @@ class ClassificationWorker(QObject):
             results = []
             
             init_time = time.time()
-            print(f"⏱️ 初始化完成，耗时: {init_time - start_time:.3f}秒")
-            
+            print(f"[TIME] Init done, time: {init_time - start_time:.3f}s")
+
             # 读取输出文件夹
             output_folder = None
             config_path = getattr(self, 'config_path', 'config.json')
@@ -241,23 +241,23 @@ class ClassificationWorker(QObject):
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = json.load(f)
                 output_folder = config.get("paths", {}).get("output_folder", None)
-            
+
             if not output_folder:
                 # 默认用图片所在文件夹
                 output_folder = os.path.dirname(self.image_paths[0])
-            
+
             output_folder = Path(output_folder)
-            
+
             # 创建类别文件夹
             folder_start = time.time()
             for class_name in classifier.classes:
                 (output_folder / class_name).mkdir(parents=True, exist_ok=True)
             folder_time = time.time()
-            print(f"⏱️ 文件夹创建完成，耗时: {folder_time - folder_start:.3f}秒")
-            
-            # 🎯 智能批次大小优化 - 根据GPU显存和图片数量动态调整
+            print(f"[TIME] Folder creation done, time: {folder_time - folder_start:.3f}s")
+
+            # 智能批次大小优化 - 根据GPU显存和图片数量动态调整
             gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3 if torch.cuda.is_available() else 4
-            
+
             # RTX 3060 12GB的优化批次大小策略
             if gpu_memory_gb >= 10:  # RTX 3060 12GB
                 base_batch_size = 160  # 增大批次，提升GPU利用率
@@ -265,26 +265,26 @@ class ClassificationWorker(QObject):
                 base_batch_size = 128
             else:  # 其他GPU
                 base_batch_size = 64
-            
+
             # 根据图片总数调整 - 小批次处理小数据集更高效
             if total_images <= 50:
                 batch_size = min(base_batch_size, total_images)
             else:
                 batch_size = base_batch_size
-            
-            print(f"ClassificationWorker: ⭐ GPU优化模式 - 批次大小 {batch_size} (GPU: {gpu_memory_gb:.1f}GB) 处理 {total_images} 张图片")
-            print(f"⏱️ 开始批次处理 - {datetime.now().strftime('%H:%M:%S')}")
-            
+
+            print(f"[GPU] Optimized mode - batch size {batch_size} (GPU: {gpu_memory_gb:.1f}GB) processing {total_images} images")
+            print(f"[TIME] Batch processing started - {datetime.now().strftime('%H:%M:%S')}")
+
             total_preprocess_time = 0
             total_inference_time = 0
             total_file_move_time = 0
-            
+
             for batch_start in range(0, total_images, batch_size):
                 batch_start_time = time.time()
                 batch_end = min(batch_start + batch_size, total_images)
                 batch_paths = self.image_paths[batch_start:batch_end]
-                
-                print(f"📦 处理批次 {batch_start//batch_size + 1}, 图片: {batch_start+1}-{batch_end}")
+
+                print(f"[BATCH] Processing batch {batch_start//batch_size + 1}, images: {batch_start+1}-{batch_end}")
                 
                 # 更新进度
                 progress = int((batch_end) * 100 / total_images)
@@ -295,7 +295,7 @@ class ClassificationWorker(QObject):
                 batch_tensors = []
                 valid_paths = []
                 
-                # 🏆 最优预处理函数 - 经过验证的最佳性能版本
+                # Optimal preprocess function - verified best performance version
                 def preprocess_single_image(image_path):
                     try:
                         # 使用PIL + 原生transform - 最佳性能平衡
@@ -304,14 +304,14 @@ class ClassificationWorker(QObject):
                         return image_path, input_tensor
                     except Exception as e:
                         return image_path, None, str(e)
-                
-                # � 最优线程配置 - 经过测试验证的最佳性能
+
+                # Optimal thread config - verified best performance
                 import concurrent.futures
-                
+
                 # 20线程 - 经过系统测试验证的最优配置 (29.48张/秒)
                 optimal_workers = 20  # 最优20线程配置
-                
-                print(f"� 启用{optimal_workers}线程最优配置 (已验证最佳性能: 29.48张/秒)")
+
+                print(f"[PERF] Using {optimal_workers} threads (verified best: 29.48 img/s)")
                 
                 with concurrent.futures.ThreadPoolExecutor(max_workers=optimal_workers) as executor:
                     parallel_results = list(executor.map(preprocess_single_image, batch_paths))
@@ -333,7 +333,7 @@ class ClassificationWorker(QObject):
                 preprocess_end = time.time()
                 preprocess_time = preprocess_end - preprocess_start
                 total_preprocess_time += preprocess_time
-                print(f"⏱️ 批次预处理完成，{len(batch_tensors)}张图片，耗时: {preprocess_time:.3f}秒")
+                print(f"[TIME] Batch preprocess done, {len(batch_tensors)} images, time: {preprocess_time:.3f}s")
                 
                 if not batch_tensors:
                     continue
@@ -353,7 +353,7 @@ class ClassificationWorker(QObject):
                     inference_end = time.time()
                     inference_time = inference_end - inference_start
                     total_inference_time += inference_time
-                    print(f"⏱️ GPU推理完成，{len(batch_tensors)}张图片，耗时: {inference_time:.3f}秒")
+                    print(f"[TIME] GPU inference done, {len(batch_tensors)} images, time: {inference_time:.3f}s")
                     
                     # 立即处理批量结果，减少GPU内存占用时间
                     file_move_start = time.time()
@@ -394,9 +394,9 @@ class ClassificationWorker(QObject):
                     total_file_move_time += file_move_time
                     
                     batch_total_time = time.time() - batch_start_time
-                    print(f"⏱️ 批次文件移动完成，{len(valid_paths)}张图片，耗时: {file_move_time:.3f}秒")
-                    print(f"📊 批次总耗时: {batch_total_time:.3f}秒 (预处理:{preprocess_time:.3f}s + 推理:{inference_time:.3f}s + 移动:{file_move_time:.3f}s)")
-                    print(f"⚡ 平均每张图片: {batch_total_time/len(valid_paths):.3f}秒/张")
+                    print(f"[TIME] Batch file move done, {len(valid_paths)} images, time: {file_move_time:.3f}s")
+                    print(f"[STATS] Batch total: {batch_total_time:.3f}s (preprocess:{preprocess_time:.3f}s + inference:{inference_time:.3f}s + move:{file_move_time:.3f}s)")
+                    print(f"[PERF] Average per image: {batch_total_time/len(valid_paths):.3f}s/img")
                     print("-" * 60)
                 
                 except Exception as e:
@@ -425,15 +425,15 @@ class ClassificationWorker(QObject):
             total_time = total_end_time - start_time
             
             print("=" * 60)
-            print(f"🎉 分类任务完成！ - {datetime.now().strftime('%H:%M:%S')}")
-            print(f"📊 总体性能统计:")
-            print(f"   • 总耗时: {total_time:.3f}秒")
-            print(f"   • 处理图片: {len(results)}张")
-            print(f"   • 平均速度: {len(results)/total_time:.2f}张/秒")
-            print(f"   • 预处理总耗时: {total_preprocess_time:.3f}秒 ({total_preprocess_time/total_time*100:.1f}%)")
-            print(f"   • GPU推理总耗时: {total_inference_time:.3f}秒 ({total_inference_time/total_time*100:.1f}%)")
-            print(f"   • 文件移动总耗时: {total_file_move_time:.3f}秒 ({total_file_move_time/total_time*100:.1f}%)")
-            print(f"   • 其他耗时: {total_time-total_preprocess_time-total_inference_time-total_file_move_time:.3f}秒")
+            print(f"[DONE] Classification complete! - {datetime.now().strftime('%H:%M:%S')}")
+            print(f"[STATS] Overall performance:")
+            print(f"   - Total time: {total_time:.3f}s")
+            print(f"   - Images processed: {len(results)}")
+            print(f"   - Average speed: {len(results)/total_time:.2f} img/s")
+            print(f"   - Preprocess total: {total_preprocess_time:.3f}s ({total_preprocess_time/total_time*100:.1f}%)")
+            print(f"   - GPU inference total: {total_inference_time:.3f}s ({total_inference_time/total_time*100:.1f}%)")
+            print(f"   - File move total: {total_file_move_time:.3f}s ({total_file_move_time/total_time*100:.1f}%)")
+            print(f"   - Other: {total_time-total_preprocess_time-total_inference_time-total_file_move_time:.3f}s")
             print("=" * 60)
             
             print(f"ClassificationWorker: 分类完成，处理了 {len(results)} 张图片")
@@ -611,7 +611,7 @@ class MainWindow(QMainWindow):
         self.status_bar = self.statusBar()
         
         # 创建设置按钮
-        self.settings_button = QPushButton("⚙️ 设置")
+        self.settings_button = QPushButton("Settings")
         self.settings_button.setFixedSize(80, 30)
         self.settings_button.setStyleSheet("""
             QPushButton {
@@ -675,7 +675,7 @@ class MainWindow(QMainWindow):
         
         # 基本信息选项卡
         basic_tab = self._create_basic_info_tab()
-        tab_widget.addTab(basic_tab, "📊 基本信息")
+        tab_widget.addTab(basic_tab, "Basic Info")
         
         # 主题设置选项卡
         theme_tab = QWidget()
@@ -698,7 +698,7 @@ class MainWindow(QMainWindow):
         theme_layout.addWidget(theme_group)
         theme_layout.addStretch()
         
-        tab_widget.addTab(theme_tab, "🎨 主题设置")
+        tab_widget.addTab(theme_tab, "Theme")
         
         layout.addWidget(tab_widget)
         
@@ -1133,7 +1133,7 @@ class MainWindow(QMainWindow):
         train_layout.addWidget(self.val_split_spin, 3, 1)
         
         # 内存使用提醒
-        memory_tip = QLabel("💡 内存优化提醒：批次大小16可避免GPU内存不足")
+        memory_tip = QLabel("[TIP] Batch size 16 recommended to avoid GPU OOM")
         memory_tip.setStyleSheet("color: #666; font-size: 12px;")
         memory_tip.setWordWrap(True)
         train_layout.addWidget(memory_tip, 4, 0, 1, 2)
@@ -1248,7 +1248,7 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(panel)
 
         # 标题
-        title_label = QLabel("📁 模型文件管理器")
+        title_label = QLabel("Model File Manager")
         title_label.setFont(QFont("微软雅黑", 12, QFont.Bold))
         layout.addWidget(title_label)
 
@@ -1258,7 +1258,7 @@ class MainWindow(QMainWindow):
 
         # 模型文件树形列表
         self.model_tree = QTreeWidget()
-        self.model_tree.setHeaderLabels(["文件名", "大小", "修改时间", "状态"])
+        self.model_tree.setHeaderLabels(["Filename", "Size", "Modified", "Status"])
         self.model_tree.setColumnWidth(0, 200)
         self.model_tree.setColumnWidth(1, 80)
         self.model_tree.setColumnWidth(2, 120)
@@ -1267,7 +1267,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.model_tree)
 
         # 刷新按钮
-        refresh_btn = QPushButton("🔄 刷新模型列表")
+        refresh_btn = QPushButton("Refresh")
         refresh_btn.clicked.connect(self._refresh_model_list)
         layout.addWidget(refresh_btn)
 
@@ -1282,22 +1282,22 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(toolbar)
 
         # 加载模型按钮
-        load_btn = QPushButton("📥 加载模型")
+        load_btn = QPushButton("Load")
         load_btn.clicked.connect(self._load_selected_model)
         layout.addWidget(load_btn)
 
         # 删除模型按钮
-        delete_btn = QPushButton("🗑️ 删除")
+        delete_btn = QPushButton("Delete")
         delete_btn.clicked.connect(self._delete_selected_model)
         layout.addWidget(delete_btn)
 
         # 重命名按钮
-        rename_btn = QPushButton("✏️ 重命名")
+        rename_btn = QPushButton("Rename")
         rename_btn.clicked.connect(self._rename_selected_model)
         layout.addWidget(rename_btn)
 
         # 导出按钮
-        export_btn = QPushButton("📤 导出")
+        export_btn = QPushButton("Export")
         export_btn.clicked.connect(self._export_selected_model)
         layout.addWidget(export_btn)
 
@@ -1314,15 +1314,15 @@ class MainWindow(QMainWindow):
 
         # 基本信息选项卡
         basic_info_tab = self._create_basic_info_tab()
-        info_tabs.addTab(basic_info_tab, "📊 基本信息")
+        info_tabs.addTab(basic_info_tab, "Basic Info")
 
         # 性能监控选项卡
         performance_tab = self._create_performance_tab()
-        info_tabs.addTab(performance_tab, "⚡ 性能监控")
+        info_tabs.addTab(performance_tab, "Performance")
 
         # 优化工具选项卡
         optimization_tab = self._create_optimization_tab()
-        info_tabs.addTab(optimization_tab, "🔧 优化工具")
+        info_tabs.addTab(optimization_tab, "Optimization")
 
         layout.addWidget(info_tabs)
 
@@ -1401,7 +1401,7 @@ class MainWindow(QMainWindow):
         self.custom_model_widget.setVisible(False)  # 默认隐藏
 
         # 保存设置按钮
-        save_auto_load_btn = QPushButton("💾 保存自动加载设置")
+        save_auto_load_btn = QPushButton("Save Settings")
         save_auto_load_btn.clicked.connect(self._save_auto_load_settings)
         auto_load_layout.addWidget(save_auto_load_btn)
 
@@ -1467,7 +1467,7 @@ class MainWindow(QMainWindow):
         chart_group = QGroupBox("性能趋势图")
         chart_layout = QVBoxLayout(chart_group)
 
-        self.performance_chart_placeholder = QLabel("📈 性能图表区域\n(需要matplotlib支持)")
+        self.performance_chart_placeholder = QLabel("Performance Chart Area\n(requires matplotlib)")
         self.performance_chart_placeholder.setAlignment(Qt.AlignCenter)
         self.performance_chart_placeholder.setStyleSheet("""
             QLabel {
@@ -1485,11 +1485,11 @@ class MainWindow(QMainWindow):
         # 控制按钮
         control_layout = QHBoxLayout()
 
-        self.start_monitoring_btn = QPushButton("▶️ 开始监控")
+        self.start_monitoring_btn = QPushButton("Start Monitor")
         self.start_monitoring_btn.clicked.connect(self._start_performance_monitoring)
         control_layout.addWidget(self.start_monitoring_btn)
 
-        self.stop_monitoring_btn = QPushButton("⏹️ 停止监控")
+        self.stop_monitoring_btn = QPushButton("Stop Monitor")
         self.stop_monitoring_btn.clicked.connect(self._stop_performance_monitoring)
         self.stop_monitoring_btn.setEnabled(False)
         control_layout.addWidget(self.stop_monitoring_btn)
@@ -1515,7 +1515,7 @@ class MainWindow(QMainWindow):
         self.quantization_combo.addItems(["FP32 (原始)", "FP16 (半精度)", "INT8 (量化)"])
         quant_layout.addWidget(self.quantization_combo)
 
-        quantize_btn = QPushButton("⚡ 量化模型")
+        quantize_btn = QPushButton("Quantize")
         quantize_btn.clicked.connect(self._quantize_model)
         quant_layout.addWidget(quantize_btn)
 
@@ -1528,7 +1528,7 @@ class MainWindow(QMainWindow):
         self.export_format_combo.addItems(["ONNX", "TensorRT", "OpenVINO"])
         export_layout.addWidget(self.export_format_combo)
 
-        export_btn = QPushButton("📤 导出模型")
+        export_btn = QPushButton("Export")
         export_btn.clicked.connect(self._export_model)
         export_layout.addWidget(export_btn)
 
@@ -1541,7 +1541,7 @@ class MainWindow(QMainWindow):
         self.compression_combo.addItems(["无压缩", "轻度压缩", "深度压缩"])
         compress_layout.addWidget(self.compression_combo)
 
-        compress_btn = QPushButton("🗜️ 压缩模型")
+        compress_btn = QPushButton("Compress")
         compress_btn.clicked.connect(self._compress_model)
         compress_layout.addWidget(compress_btn)
 
@@ -1599,7 +1599,7 @@ class MainWindow(QMainWindow):
         chart_group = QGroupBox("性能趋势图")
         chart_layout = QVBoxLayout(chart_group)
 
-        self.performance_chart_placeholder = QLabel("📈 性能图表区域\n(需要matplotlib支持)")
+        self.performance_chart_placeholder = QLabel("Performance Chart Area\n(requires matplotlib)")
         self.performance_chart_placeholder.setAlignment(Qt.AlignCenter)
         self.performance_chart_placeholder.setStyleSheet("""
             QLabel {
@@ -1617,11 +1617,11 @@ class MainWindow(QMainWindow):
         # 控制按钮
         control_layout = QHBoxLayout()
 
-        self.start_monitoring_btn = QPushButton("▶️ 开始监控")
+        self.start_monitoring_btn = QPushButton("Start Monitor")
         self.start_monitoring_btn.clicked.connect(self._start_performance_monitoring)
         control_layout.addWidget(self.start_monitoring_btn)
 
-        self.stop_monitoring_btn = QPushButton("⏹️ 停止监控")
+        self.stop_monitoring_btn = QPushButton("Stop Monitor")
         self.stop_monitoring_btn.clicked.connect(self._stop_performance_monitoring)
         self.stop_monitoring_btn.setEnabled(False)
         control_layout.addWidget(self.stop_monitoring_btn)
@@ -1858,14 +1858,14 @@ class MainWindow(QMainWindow):
             from core.model_factory import ModelFactory
             factory = ModelFactory()
 
-            models_info = "🎯 支持的预训练模型架构:\n\n"
+            models_info = "Supported pretrained model architectures:\n\n"
             for model_name in factory.get_supported_models():
-                models_info += f"• {model_name}\n"
+                models_info += f"- {model_name}\n"
 
-            models_info += "\n💡 提示: 不同模型在准确率和速度之间有权衡"
+            models_info += "\n[TIP] Different models have trade-offs between accuracy and speed"
             self.supported_models_text.setPlainText(models_info)
         except Exception as e:
-            self.supported_models_text.setPlainText(f"加载模型信息失败: {str(e)}")
+            self.supported_models_text.setPlainText(f"Failed to load model info: {str(e)}")
 
     def _start_performance_monitoring(self):
         """开始性能监控"""
@@ -2257,12 +2257,12 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
                 if hasattr(self, 'data_path_edit'):
                     self.data_path_edit.setText(last_training_folder)
             
-            print(f"✅ 路径记忆加载完成:")
-            print(f"  分类文件夹: {last_classification_folder}")
-            print(f"  训练文件夹: {last_training_folder}")
-            
+            print(f"[OK] Path memory loaded:")
+            print(f"  Classification folder: {last_classification_folder}")
+            print(f"  Training folder: {last_training_folder}")
+
         except Exception as e:
-            print(f"⚠️ 加载记忆路径失败: {e}")
+            print(f"[WARN] Failed to load path memory: {e}")
     
     def save_current_paths(self):
         """保存当前路径"""
@@ -2277,9 +2277,9 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
                 current_training_folder = self.data_path_edit.text().strip()
                 if current_training_folder:
                     self.settings.setValue("last_training_folder", current_training_folder)
-                    
+
         except Exception as e:
-            print(f"⚠️ 保存路径失败: {e}")
+            print(f"[WARN] Failed to save path: {e}")
     
     def closeEvent(self, event):
         """窗口关闭事件"""

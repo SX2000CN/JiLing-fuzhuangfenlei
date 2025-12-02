@@ -123,9 +123,13 @@ class ClothingTrainer:
             'val_acc': [],
             'learning_rate': []
         }
-        
+
         # 回调函数
         self.callbacks = []
+
+        # 停止标志和进度回调
+        self.stop_flag = False
+        self.progress_callback = None  # 签名: (batch_idx, total_batches, loss, acc) -> None
         
         logger.info(f"训练器初始化完成:")
         logger.info(f"  模型: {model_name}")
@@ -364,78 +368,109 @@ class ClothingTrainer:
         return train_loader, val_loader
     
     def train_epoch(self, train_loader: DataLoader) -> Tuple[float, float]:
-        """训练一个epoch"""
+        """训练一个epoch
+
+        Returns:
+            Tuple[float, float]: (loss, accuracy) 或 (None, None) 如果被停止
+        """
         self.model.train()
         running_loss = 0.0
         correct = 0
         total = 0
-        
+        total_batches = len(train_loader)
+
         # 显示训练开始时的GPU内存状态
         logger.info(f"训练开始: {self._get_gpu_memory_info()}")
-        
+
         with tqdm(train_loader, desc="训练中") as pbar:
             for batch_idx, (images, labels) in enumerate(pbar):
+                # 检查停止标志
+                if self.stop_flag:
+                    logger.info("训练被用户停止")
+                    return None, None
+
                 images, labels = images.to(self.device), labels.to(self.device)
-                
+
                 # 前向传播
                 self.optimizer.zero_grad()
                 outputs = self.model(images)
                 loss = self.criterion(outputs, labels)
-                
+
                 # 反向传播
                 loss.backward()
                 self.optimizer.step()
-                
+
                 # 统计
                 running_loss += loss.item()
                 _, predicted = outputs.max(1)
                 total += labels.size(0)
                 correct += predicted.eq(labels).sum().item()
-                
+
+                current_acc = 100. * correct / total if total > 0 else 0
+
+                # 调用进度回调 - 每个 batch 都调用以确保实时更新
+                if self.progress_callback:
+                    try:
+                        self.progress_callback(batch_idx + 1, total_batches, loss.item(), current_acc)
+                    except Exception as e:
+                        logger.warning(f"进度回调错误: {e}")
+
                 # 定期清理GPU内存
                 if batch_idx % 50 == 0 and batch_idx > 0:
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
-                
+
                 # 更新进度条
                 pbar.set_postfix({
                     'Loss': f'{loss.item():.4f}',
-                    'Acc': f'{100.*correct/total:.2f}%'
+                    'Acc': f'{current_acc:.2f}%'
                 })
-        
+
         epoch_loss = running_loss / len(train_loader)
         epoch_acc = 100. * correct / total
-        
+
         return epoch_loss, epoch_acc
     
     def validate_epoch(self, val_loader: DataLoader) -> Tuple[float, float]:
-        """验证一个epoch"""
+        """验证一个epoch
+
+        Returns:
+            Tuple[float, float]: (loss, accuracy) 或 (None, None) 如果被停止
+        """
+        # 检查停止标志
+        if self.stop_flag:
+            return None, None
+
         self.model.eval()
         running_loss = 0.0
         correct = 0
         total = 0
-        
+
         with torch.no_grad():
             with tqdm(val_loader, desc="验证中") as pbar:
                 for images, labels in pbar:
+                    # 检查停止标志
+                    if self.stop_flag:
+                        return None, None
+
                     images, labels = images.to(self.device), labels.to(self.device)
-                    
+
                     outputs = self.model(images)
                     loss = self.criterion(outputs, labels)
-                    
+
                     running_loss += loss.item()
                     _, predicted = outputs.max(1)
                     total += labels.size(0)
                     correct += predicted.eq(labels).sum().item()
-                    
+
                     pbar.set_postfix({
                         'Loss': f'{loss.item():.4f}',
                         'Acc': f'{100.*correct/total:.2f}%'
                     })
-        
+
         epoch_loss = running_loss / len(val_loader)
         epoch_acc = 100. * correct / total
-        
+
         return epoch_loss, epoch_acc
     
     def train(self, 

@@ -1,38 +1,500 @@
 """
 Native Qt UI - 使用原生 PySide6 实现的界面
 完全按照 Figma 设计稿还原
+
+功能模块:
+- 训练页面: 配置和执行模型训练
+- 分类页面: 图像分类和结果展示
+- 设置页面: 应用程序配置
 """
 import sys
 import os
+import time
 from pathlib import Path
+from datetime import datetime
+from typing import Optional, List, Dict, Any
+
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QSlider, QComboBox, QLineEdit, QTextEdit,
     QFrame, QFileDialog, QSizePolicy, QSpacerItem, QTableWidget,
     QTableWidgetItem, QHeaderView, QProgressBar, QStackedWidget,
     QButtonGroup, QScrollArea, QCheckBox, QSpinBox, QDoubleSpinBox,
-    QGridLayout
+    QGridLayout, QMessageBox
 )
-from PySide6.QtCore import Qt, QSize, Signal, Slot, QPoint, QByteArray
+from PySide6.QtCore import Qt, QSize, Signal, Slot, QPoint, QByteArray, QThread, QObject, QSettings
 from PySide6.QtGui import QFont, QColor, QPalette, QIcon, QPainter, QPen, QBrush, QFontDatabase, QPixmap, QPainterPath, QRegion
 from PySide6.QtSvg import QSvgRenderer
 
 # 获取项目根目录
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
+# 添加项目路径到 sys.path，确保可以导入 src.core 模块
+_src_path = str(PROJECT_ROOT / "src")
+if _src_path not in sys.path:
+    sys.path.insert(0, _src_path)
+
+# 后端模块导入 - 延迟导入以避免循环依赖
+def _import_backend_modules():
+    """延迟导入后端模块"""
+    global ClothingClassifier, ClothingTrainer, torch
+    try:
+        import torch
+        from core.pytorch_classifier import ClothingClassifier
+        from core.pytorch_trainer import ClothingTrainer
+        return True
+    except ImportError as e:
+        print(f"警告: 后端模块导入失败: {e}")
+        return False
+
+# 尝试导入后端模块
+BACKEND_AVAILABLE = _import_backend_modules()
+
+# 可选依赖: GPU 监控
+try:
+    import GPUtil
+    GPU_UTIL_AVAILABLE = True
+except ImportError:
+    GPU_UTIL_AVAILABLE = False
+
 # MiSans 字体路径
 FONT_DIR = PROJECT_ROOT / "MiSans" / "MiSans 开发下载字重"
 
 
+# =============================================================================
+# Worker 类 - 后台任务处理
+# =============================================================================
+
+class TrainingWorker(QObject):
+    """
+    训练工作线程
+
+    在后台执行模型训练任务，通过信号与主线程通信。
+
+    Signals:
+        progress_updated: (int, str, dict) - 进度百分比、状态消息、指标字典
+        training_completed: (bool, str) - 是否成功、结果消息
+        epoch_completed: (int, dict) - 当前轮次、指标字典
+    """
+    progress_updated = Signal(int, str, dict)
+    training_completed = Signal(bool, str)
+    epoch_completed = Signal(int, dict)
+
+    def __init__(self, trainer_config: Dict[str, Any], training_params: Dict[str, Any]):
+        """
+        初始化训练工作线程
+
+        Args:
+            trainer_config: 训练器配置（model_name, num_classes, image_size等）
+            training_params: 训练参数（epochs, batch_size, learning_rate等）
+        """
+        super().__init__()
+        self.trainer_config = trainer_config
+        self.training_params = training_params
+        self.should_stop = False
+        self.trainer = None  # 保存 trainer 引用以便停止
+
+    def start_training(self) -> None:
+        """开始训练任务"""
+        if not BACKEND_AVAILABLE:
+            self.training_completed.emit(False, "后端模块不可用，无法训练")
+            return
+
+        try:
+            # 强制清理GPU内存
+            self.progress_updated.emit(0, "清理GPU内存...", {})
+            if torch.cuda.is_available():
+                # 强制垃圾回收
+                import gc
+                gc.collect()
+                # 清理 CUDA 缓存
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                # 再次清理
+                gc.collect()
+                torch.cuda.empty_cache()
+
+            # 创建训练器 - 准备阶段保持 0%
+            self.progress_updated.emit(0, "创建训练器...", {})
+            self.trainer = ClothingTrainer(**self.trainer_config)
+
+            # 设置进度回调 - 用于实时显示 batch 进度
+            num_epochs = self.training_params['num_epochs']
+            current_epoch = [0]  # 使用列表以便在闭包中修改
+            total_batches_all = [0]  # 训练集总 batch 数（初始化后更新）
+
+            def batch_progress_callback(batch_idx, total_batches, loss, acc):
+                """每个 batch 的进度回调"""
+                # 保存总 batch 数
+                total_batches_all[0] = total_batches
+
+                # 计算总进度: 训练阶段占 99%，保存阶段占 1%
+                # 进度 = (已完成的 epoch 数 * 总 batch 数 + 当前 batch) / (总 epoch 数 * 总 batch 数) * 99
+                completed_batches = current_epoch[0] * total_batches + batch_idx
+                total_batches_overall = num_epochs * total_batches
+                progress = int((completed_batches / total_batches_overall) * 99)
+
+                message = f"Epoch {current_epoch[0]+1}/{num_epochs} - Batch {batch_idx}/{total_batches}"
+                self.progress_updated.emit(progress, message, {
+                    'batch_loss': loss,
+                    'batch_acc': acc / 100.0  # 转换为 0-1 范围
+                })
+
+            self.trainer.progress_callback = batch_progress_callback
+
+            # 构建模型 - 准备阶段不计入进度，保持 0%
+            self.progress_updated.emit(0, "构建模型中...", {})
+            model = self.trainer.build_model(pretrained=self.training_params.get('pretrained', True))
+
+            # 加载基础模型（如果指定）
+            base_model_path = self.training_params.get('base_model_path')
+            if base_model_path and os.path.exists(base_model_path):
+                self.progress_updated.emit(0, "加载基础模型...", {})
+                self.trainer.load_model(base_model_path)
+
+            # 设置优化器
+            self.progress_updated.emit(0, "设置优化器...", {})
+            self.trainer.setup_optimizer(lr=self.training_params['learning_rate'])
+
+            # 创建数据加载器
+            self.progress_updated.emit(0, "准备数据集...", {})
+            train_loader, val_loader = self.trainer.create_data_loaders(
+                data_dir=self.training_params['data_path'],
+                batch_size=self.training_params['batch_size'],
+                val_split=self.training_params['val_split']
+            )
+
+            self.progress_updated.emit(0, "开始训练...", {})
+
+            # 训练循环
+            for epoch in range(num_epochs):
+                current_epoch[0] = epoch
+
+                # 检查停止标志
+                if self.should_stop or self.trainer.stop_flag:
+                    break
+
+                # 定期清理GPU内存
+                if epoch % 5 == 0 and epoch > 0 and torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+                # 训练一个epoch
+                train_loss, train_acc = self.trainer.train_epoch(train_loader)
+
+                # 如果返回 None，说明被停止
+                if train_loss is None:
+                    self.should_stop = True
+                    break
+
+                # 验证
+                val_loss, val_acc = self.trainer.validate_epoch(val_loader)
+
+                # 如果返回 None，说明被停止
+                if val_loss is None:
+                    self.should_stop = True
+                    break
+
+                # 计算进度 - 训练阶段占 99%
+                progress = int((epoch + 1) / num_epochs * 99)
+
+                # 当前指标
+                metrics = {
+                    'train_loss': train_loss,
+                    'train_acc': train_acc / 100.0,  # 转换为 0-1 范围
+                    'val_loss': val_loss,
+                    'val_acc': val_acc / 100.0,  # 转换为 0-1 范围
+                    'lr': self.trainer.optimizer.param_groups[0]['lr'] if self.trainer.optimizer else 0.001
+                }
+
+                message = f"Epoch {epoch+1}/{num_epochs} 完成"
+                self.progress_updated.emit(progress, message, metrics)
+                self.epoch_completed.emit(epoch + 1, metrics)
+
+                # 学习率调度
+                if self.trainer.scheduler:
+                    self.trainer.scheduler.step()
+
+            if not self.should_stop and not self.trainer.stop_flag:
+                # 保存模型 - 训练完成时进度为 99%，保存完成后为 100%
+                self.progress_updated.emit(99, "保存模型...", {})
+                os.makedirs("models", exist_ok=True)
+
+                model_save_path = f"models/JiLing_model_{int(time.time())}.pth"
+                final_metrics = self.trainer.history.get('val_acc', [0])
+                final_acc = final_metrics[-1] if final_metrics else 0
+                self.trainer.save_model(model_save_path, num_epochs, final_acc)
+
+                # 清理GPU内存
+                self._cleanup_gpu_memory(self.trainer)
+
+                self.progress_updated.emit(100, "训练完成！", {})
+                self.training_completed.emit(True, f"模型已保存到 {model_save_path}")
+            else:
+                self._cleanup_gpu_memory(self.trainer)
+                self.training_completed.emit(False, "训练被用户停止")
+
+        except Exception as e:
+            self.training_completed.emit(False, f"训练错误: {str(e)}")
+
+    def _cleanup_gpu_memory(self, trainer: Optional[Any] = None) -> None:
+        """清理GPU内存"""
+        try:
+            import gc
+
+            if trainer:
+                for attr in ['model', 'optimizer', 'scheduler', 'criterion']:
+                    if hasattr(trainer, attr) and getattr(trainer, attr):
+                        obj = getattr(trainer, attr)
+                        if hasattr(obj, 'cpu'):
+                            obj.cpu()
+                        delattr(trainer, attr)
+
+            gc.collect()
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+
+        except Exception:
+            pass  # 静默处理清理错误
+
+    def stop_training(self) -> None:
+        """停止训练"""
+        self.should_stop = True
+        # 同时设置 trainer 的停止标志，使其在 batch 循环中立即停止
+        if self.trainer:
+            self.trainer.stop_flag = True
+
+
+class ClassificationWorker(QObject):
+    """
+    分类工作线程
+
+    在后台执行图像分类任务，支持批量处理和文件移动。
+
+    Signals:
+        progress_updated: (int, str) - 进度百分比、状态消息
+        classification_completed: (list) - 分类结果列表
+    """
+    progress_updated = Signal(int, str)
+    classification_completed = Signal(list)
+
+    def __init__(self, image_paths: List[str], classifier: Optional[Any] = None,
+                 output_folder: Optional[str] = None):
+        """
+        初始化分类工作线程
+
+        Args:
+            image_paths: 要分类的图像路径列表
+            classifier: ClothingClassifier 实例
+            output_folder: 输出文件夹路径（可选）
+        """
+        super().__init__()
+        self.image_paths = [str(p) for p in image_paths]  # 确保是字符串
+        self.classifier = classifier
+        self.output_folder = output_folder
+
+    def start_classification(self) -> None:
+        """开始分类任务"""
+        if not BACKEND_AVAILABLE:
+            self.progress_updated.emit(0, "后端模块不可用")
+            self.classification_completed.emit([])
+            return
+
+        start_time = time.time()
+
+        try:
+            from PIL import Image
+            import concurrent.futures
+
+            classifier = self.classifier
+            if classifier is None:
+                raise Exception("未加载分类器")
+
+            total_images = len(self.image_paths)
+            results = []
+
+            # 确定输出文件夹
+            if self.output_folder:
+                output_folder = Path(self.output_folder)
+            else:
+                output_folder = Path(self.image_paths[0]).parent
+
+            # 创建类别文件夹
+            for class_name in classifier.classes:
+                (output_folder / class_name).mkdir(parents=True, exist_ok=True)
+
+            # 智能批次大小
+            gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3 if torch.cuda.is_available() else 4
+
+            if gpu_memory_gb >= 10:
+                batch_size = 160
+            elif gpu_memory_gb >= 6:
+                batch_size = 128
+            else:
+                batch_size = 64
+
+            batch_size = min(batch_size, total_images)
+
+            # 预处理函数
+            def preprocess_single_image(image_path: str):
+                try:
+                    image = Image.open(image_path).convert('RGB')
+                    input_tensor = classifier.transform(image)
+                    return image_path, input_tensor
+                except Exception as e:
+                    return image_path, None, str(e)
+
+            # 批量处理
+            for batch_start in range(0, total_images, batch_size):
+                batch_end = min(batch_start + batch_size, total_images)
+                batch_paths = self.image_paths[batch_start:batch_end]
+
+                progress = int(batch_end * 100 / total_images)
+                self.progress_updated.emit(progress, f"分类中... {batch_end}/{total_images}")
+
+                # 多线程预处理
+                batch_tensors = []
+                valid_paths = []
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+                    parallel_results = list(executor.map(preprocess_single_image, batch_paths))
+
+                for result in parallel_results:
+                    if len(result) == 2:
+                        image_path, tensor = result
+                        batch_tensors.append(tensor)
+                        valid_paths.append(image_path)
+                    else:
+                        image_path, _, error = result
+                        results.append({
+                            'path': image_path,
+                            'result': {'predicted_class': 'error', 'confidence': 0.0, 'error': error}
+                        })
+
+                if not batch_tensors:
+                    continue
+
+                # GPU推理
+                try:
+                    batch_tensor = torch.stack(batch_tensors).to(classifier.device, non_blocking=True)
+
+                    with torch.no_grad():
+                        with torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
+                            outputs = classifier.model(batch_tensor)
+                            probabilities = torch.softmax(outputs, dim=1)
+                            confidences, predicted = torch.max(probabilities, 1)
+
+                    # 处理结果并移动文件
+                    for i, (image_path, confidence, predicted_idx) in enumerate(zip(valid_paths, confidences, predicted)):
+                        predicted_class = classifier.classes[predicted_idx.item()]
+                        confidence_score = confidence.item()
+
+                        # 移动文件
+                        dest_folder = output_folder / predicted_class
+                        dest_file = dest_folder / Path(image_path).name
+
+                        if not dest_file.exists():
+                            os.rename(image_path, dest_file)
+
+                        # 构造结果
+                        all_probs = probabilities[i].cpu().numpy()
+                        class_probs = {
+                            class_name: float(prob)
+                            for class_name, prob in zip(classifier.classes, all_probs)
+                        }
+
+                        results.append({
+                            'path': str(dest_file),
+                            'result': {
+                                'predicted_class': predicted_class,
+                                'confidence': confidence_score,
+                                'class_probabilities': class_probs,
+                                'image_path': str(dest_file)
+                            }
+                        })
+
+                except Exception as e:
+                    # 降级到单张处理
+                    for image_path in valid_paths:
+                        try:
+                            predicted_class, confidence, result = classifier.predict_single(image_path)
+                            dest_folder = output_folder / predicted_class
+                            dest_file = dest_folder / Path(image_path).name
+                            if not dest_file.exists():
+                                os.rename(image_path, dest_file)
+                            results.append({'path': str(dest_file), 'result': result})
+                        except Exception as e2:
+                            results.append({
+                                'path': image_path,
+                                'result': {'predicted_class': 'error', 'confidence': 0.0, 'error': str(e2)}
+                            })
+
+            # 完成
+            total_time = time.time() - start_time
+            self.progress_updated.emit(100, f"完成! {len(results)}张, {total_time:.1f}秒")
+            self.classification_completed.emit(results)
+
+        except Exception as e:
+            self.progress_updated.emit(0, f"分类失败: {str(e)}")
+            self.classification_completed.emit([])
+
+
+class LayoutConstants:
+    """
+    布局常量类 - 统一管理UI布局相关的常量
+
+    参考 VS Code Design System:
+    - 间距使用 4px 的倍数
+    - 圆角统一使用 2px 或 4px
+    """
+
+    # 窗口尺寸
+    WINDOW_WIDTH = 990
+    WINDOW_HEIGHT = 660
+
+    # 侧边栏
+    SIDEBAR_WIDTH = 60
+    SIDEBAR_BUTTON_SIZE = 50
+    SIDEBAR_ICON_SIZE = 24
+
+    # 参数区
+    PARAM_AREA_WIDTH = 380
+    CARD_PADDING = 16
+    CARD_SPACING = 12
+
+    # 终端区
+    TERMINAL_TITLE_HEIGHT = 60
+    BOTTOM_BAR_HEIGHT = 80
+    PROGRESS_BAR_HEIGHT = 20
+
+    # 控制按钮
+    CONTROL_BTN_WIDTH = 46
+    CONTROL_BTN_HEIGHT = 32
+    CONTROL_ICON_SIZE = 12
+
+    # 圆角
+    CORNER_RADIUS = 10  # 窗口圆角
+    CARD_RADIUS = 4     # 卡片圆角
+    INPUT_RADIUS = 2    # 输入框圆角
+
+    # 间距
+    SPACING_XS = 4
+    SPACING_SM = 8
+    SPACING_MD = 12
+    SPACING_LG = 16
+    SPACING_XL = 24
+
+
 class FontManager:
     """字体管理器 - 加载并管理 MiSans 字体"""
-    
+
     _fonts_loaded = False
     _font_ids = []
-    
+
     # 字体名称常量
     FAMILY = "MiSans"
-    
+
     @classmethod
     def load_fonts(cls):
         """加载 MiSans 字体族"""
@@ -138,6 +600,7 @@ class StyleSheet:
     VS_SIDEBAR_BG = "#252526"      # 侧边栏背景
     VS_ACTIVITY_BAR_BG = "#333333" # 活动栏背景
     VS_FOREGROUND = "#CCCCCC"      # 默认前景色
+    VS_DESCRIPTION = "#9D9D9D"     # 描述文字颜色
     VS_FOCUS_BORDER = "#007FD4"    # 聚焦边框色
     VS_INPUT_BG = "#3C3C3C"        # 输入框背景
     VS_INPUT_BORDER = "#505050"    # 输入框边框
@@ -145,6 +608,17 @@ class StyleSheet:
     VS_BUTTON_FG = "#FFFFFF"       # 按钮文字
     VS_BUTTON_HOVER = "#1177BB"    # 按钮悬停
     VS_DIVIDER = "#454545"         # 分割线
+
+    # 日志颜色常量
+    COLORS = {
+        'DEBUG': '#6A9955',
+        'INFO': '#E5E5E5',
+        'WARNING': '#CCA700',
+        'ERROR': '#F48771',
+        'SUCCESS': '#89D185',
+        'METRIC': '#9CDCFE',
+        'HIGHLIGHT': '#4EC9B0'
+    }
     
     # 映射到现有布局变量
     SIDEBAR_BG = VS_ACTIVITY_BAR_BG  # 左侧图标栏对应 Activity Bar
@@ -1052,23 +1526,198 @@ class SliderRow(QWidget):
     def value(self) -> int:
         """返回滑块原始值"""
         return self.slider.value()
-    
+
+    def setValue(self, value: int) -> None:
+        """设置滑块值"""
+        self.slider.setValue(value)
+        self._update_value_display(value)
+
     def real_value(self) -> float:
         """返回实际值 (滑块值 * scale)"""
         return self.slider.value() * self.scale
 
+    def set_real_value(self, value: float) -> None:
+        """设置实际值 (自动转换为滑块值)"""
+        slider_value = int(value / self.scale)
+        self.slider.setValue(slider_value)
+        self._update_value_display(slider_value)
+
 
 class TerminalOutput(QTextEdit):
-    """终端输出区域"""
+    """
+    终端输出区域 - VS Code 风格
+
+    支持:
+    - 日志级别（DEBUG, INFO, WARNING, ERROR, SUCCESS）
+    - 时间戳
+    - 颜色编码
+    - 自动滚动
+    """
+
+    # 日志级别颜色 (参考 VS Code Design System)
+    COLORS = {
+        'DEBUG': '#6A9955',    # 绿色注释色
+        'INFO': '#E5E5E5',     # 默认前景色
+        'WARNING': '#CCA700',  # 警告黄色
+        'ERROR': '#F48771',    # 错误红色
+        'SUCCESS': '#89D185',  # 成功绿色
+        'METRIC': '#9CDCFE',   # 指标蓝色
+        'HIGHLIGHT': '#4EC9B0' # 高亮青色
+    }
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setReadOnly(True)
         self.setStyleSheet(StyleSheet.TERMINAL_OUTPUT)
-        self.append_log("系统就绪，等待开始训练...", "#13C468")
-    
-    def append_log(self, message: str, color: str = "#E5E5E5"):
-        self.append(f'<span style="color: {color};">{message}</span>')
+        self.show_timestamp = True
+        self.log_success("系统就绪")
+
+    def _format_timestamp(self) -> str:
+        """获取格式化的时间戳"""
+        return datetime.now().strftime("%H:%M:%S")
+
+    def append_log(self, message: str, color: str = "#E5E5E5", show_time: bool = True) -> None:
+        """
+        添加日志消息
+
+        Args:
+            message: 日志消息
+            color: 文字颜色
+            show_time: 是否显示时间戳
+        """
+        if show_time and self.show_timestamp:
+            timestamp = f'<span style="color: #6A9955;">[{self._format_timestamp()}]</span> '
+        else:
+            timestamp = ""
+
+        self.append(f'{timestamp}<span style="color: {color};">{message}</span>')
         self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
+
+    def log_debug(self, message: str) -> None:
+        """输出调试日志"""
+        self.append_log(f"[DEBUG] {message}", self.COLORS['DEBUG'])
+
+    def log_info(self, message: str) -> None:
+        """输出信息日志"""
+        self.append_log(message, self.COLORS['INFO'])
+
+    def log_warning(self, message: str) -> None:
+        """输出警告日志"""
+        self.append_log(f"⚠ {message}", self.COLORS['WARNING'])
+
+    def log_error(self, message: str) -> None:
+        """输出错误日志"""
+        self.append_log(f"✗ {message}", self.COLORS['ERROR'])
+
+    def log_success(self, message: str) -> None:
+        """输出成功日志"""
+        self.append_log(f"✓ {message}", self.COLORS['SUCCESS'])
+
+    def log_metric(self, label: str, value: str) -> None:
+        """输出指标日志"""
+        self.append_log(f"  {label}: {value}", self.COLORS['METRIC'], show_time=False)
+
+    def log_divider(self, char: str = "─", length: int = 40) -> None:
+        """输出分隔线"""
+        self.append_log(char * length, self.COLORS['DEBUG'], show_time=False)
+
+    def update_last_line(self, message: str, color: str = "#808080") -> None:
+        """
+        更新最后一行内容（用于实时进度显示，类似 tqdm）
+
+        Args:
+            message: 新的消息内容
+            color: 文字颜色
+        """
+        cursor = self.textCursor()
+        # 移动到文档末尾
+        cursor.movePosition(cursor.MoveOperation.End)
+        # 选择最后一行
+        cursor.movePosition(cursor.MoveOperation.StartOfBlock, cursor.MoveMode.KeepAnchor)
+        # 删除选中内容
+        cursor.removeSelectedText()
+        # 如果不是第一行，删除换行符
+        if not cursor.atStart():
+            cursor.deletePreviousChar()
+
+        # 插入新内容
+        timestamp = f'<span style="color: #6A9955;">[{self._format_timestamp()}]</span> '
+        html = f'{timestamp}<span style="color: {color};">{message}</span>'
+        self.append(html)
+
+        # 滚动到底部
+        self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
+
+    def clear_log(self) -> None:
+        """清空日志"""
+        self.clear()
+        self.log_success("日志已清空")
+
+
+class WindowControlBar(QWidget):
+    """
+    窗口控制栏组件 - VS Code 风格
+
+    包含最小化、最大化/还原、关闭按钮
+    可配置按钮大小和图标颜色
+    """
+
+    minimize_clicked = Signal()
+    maximize_clicked = Signal()
+    close_clicked = Signal()
+
+    def __init__(self, button_size: tuple = (46, 32), icon_color: str = "#D1D1D1",
+                 icon_size: int = 12, parent=None):
+        super().__init__(parent)
+        self.button_size = button_size
+        self.icon_color = icon_color
+        self.icon_size = icon_size
+
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        """设置UI"""
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # 最小化按钮
+        self.btn_minimize = QPushButton()
+        self.btn_minimize.setFixedSize(*self.button_size)
+        self.btn_minimize.setIcon(self._create_svg_icon(IconSvg.MINIMIZE, self.icon_color))
+        self.btn_minimize.setIconSize(QSize(self.icon_size, self.icon_size))
+        self.btn_minimize.setStyleSheet(StyleSheet.CONTROL_BTN)
+        self.btn_minimize.clicked.connect(self.minimize_clicked.emit)
+        layout.addWidget(self.btn_minimize)
+
+        # 最大化按钮
+        self.btn_maximize = QPushButton()
+        self.btn_maximize.setFixedSize(*self.button_size)
+        self.btn_maximize.setIcon(self._create_svg_icon(IconSvg.MAXIMIZE, self.icon_color))
+        self.btn_maximize.setIconSize(QSize(self.icon_size, self.icon_size))
+        self.btn_maximize.setStyleSheet(StyleSheet.CONTROL_BTN)
+        self.btn_maximize.clicked.connect(self.maximize_clicked.emit)
+        layout.addWidget(self.btn_maximize)
+
+        # 关闭按钮
+        self.btn_close = QPushButton()
+        self.btn_close.setFixedSize(*self.button_size)
+        self.btn_close.setIcon(self._create_svg_icon(IconSvg.CLOSE, self.icon_color))
+        self.btn_close.setIconSize(QSize(self.icon_size, self.icon_size))
+        self.btn_close.setStyleSheet(StyleSheet.CLOSE_BTN)
+        self.btn_close.clicked.connect(self.close_clicked.emit)
+        layout.addWidget(self.btn_close)
+
+    def _create_svg_icon(self, svg_template: str, color: str) -> QIcon:
+        """创建SVG图标"""
+        svg_content = svg_template.replace("{color}", color)
+        renderer = QSvgRenderer(QByteArray(svg_content.encode()))
+        pixmap = QPixmap(32, 32)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        renderer.render(painter)
+        painter.end()
+        return QIcon(pixmap)
 
 
 class SettingsRow(QWidget):
@@ -1207,15 +1856,161 @@ class SettingsCheckRow(QWidget):
         super().mousePressEvent(event)
 
 
+class GPUStatusWidget(QWidget):
+    """
+    GPU 状态监控组件 - 显示 GPU 使用率和显存
+
+    支持两种模式：
+    - compact=True: 紧凑模式，适用于左侧边栏底部（垂直布局）
+    - compact=False: 标准模式，适用于终端区顶部（水平布局）
+
+    使用定时器定期更新状态
+    """
+
+    def __init__(self, parent=None, compact: bool = False):
+        super().__init__(parent)
+        self.compact = compact
+
+        if compact:
+            self.setFixedWidth(50)
+        else:
+            self.setFixedHeight(24)
+
+        self._setup_ui()
+
+        # 定时器更新
+        from PySide6.QtCore import QTimer
+        self.update_timer = QTimer(self)
+        self.update_timer.timeout.connect(self._update_status)
+        self.update_timer.start(2000)  # 每2秒更新
+
+        # 初始更新
+        self._update_status()
+
+    def _setup_ui(self) -> None:
+        """设置UI"""
+        if self.compact:
+            # 紧凑模式 - 垂直布局，适用于侧边栏
+            layout = QVBoxLayout(self)
+            layout.setContentsMargins(0, 5, 0, 5)
+            layout.setSpacing(2)
+            layout.setAlignment(Qt.AlignCenter)
+
+            # GPU 使用率（百分比）
+            self.usage_label = QLabel("--")
+            self.usage_label.setAlignment(Qt.AlignCenter)
+            self.usage_label.setStyleSheet(f"color: {StyleSheet.VS_FOREGROUND}; font-size: 10px;")
+            layout.addWidget(self.usage_label)
+
+            # 显存使用
+            self.memory_label = QLabel("--")
+            self.memory_label.setAlignment(Qt.AlignCenter)
+            self.memory_label.setStyleSheet(f"color: {StyleSheet.VS_DESCRIPTION}; font-size: 9px;")
+            layout.addWidget(self.memory_label)
+
+            # GPU 标签（用于 tooltip 显示完整信息）
+            self.gpu_label = QLabel()  # 隐藏的标签，用于存储 GPU 名称
+            self.gpu_label.hide()
+
+        else:
+            # 标准模式 - 水平布局
+            layout = QHBoxLayout(self)
+            layout.setContentsMargins(8, 0, 8, 0)
+            layout.setSpacing(12)
+
+            # GPU 图标和名称
+            self.gpu_label = QLabel("GPU:")
+            self.gpu_label.setStyleSheet(f"color: {StyleSheet.VS_DESCRIPTION}; font-size: 11px;")
+            layout.addWidget(self.gpu_label)
+
+            # 使用率
+            self.usage_label = QLabel("---%")
+            self.usage_label.setStyleSheet(f"color: {StyleSheet.VS_FOREGROUND}; font-size: 11px;")
+            layout.addWidget(self.usage_label)
+
+            # 显存
+            self.memory_label = QLabel("---/---GB")
+            self.memory_label.setStyleSheet(f"color: {StyleSheet.VS_FOREGROUND}; font-size: 11px;")
+            layout.addWidget(self.memory_label)
+
+            layout.addStretch()
+
+    def _update_status(self) -> None:
+        """更新 GPU 状态"""
+        try:
+            if GPU_UTIL_AVAILABLE:
+                gpus = GPUtil.getGPUs()
+                if gpus:
+                    gpu = gpus[0]
+                    load_percent = gpu.load * 100
+                    mem_used_gb = gpu.memoryUsed / 1024
+                    mem_total_gb = gpu.memoryTotal / 1024
+
+                    if self.compact:
+                        self.usage_label.setText(f"{load_percent:.0f}%")
+                        self.memory_label.setText(f"{mem_used_gb:.1f}G")
+                        self.setToolTip(f"{gpu.name}\n使用率: {load_percent:.0f}%\n显存: {mem_used_gb:.1f}/{mem_total_gb:.1f}GB")
+                    else:
+                        self.gpu_label.setText(f"GPU: {gpu.name[:15]}...")
+                        self.usage_label.setText(f"{load_percent:.0f}%")
+                        self.memory_label.setText(f"{mem_used_gb:.1f}/{mem_total_gb:.1f}GB")
+
+                    # 根据使用率设置颜色
+                    if gpu.load > 0.9:
+                        color = StyleSheet.COLORS.get('ERROR', '#F48771')
+                    elif gpu.load > 0.7:
+                        color = StyleSheet.COLORS.get('WARNING', '#CCA700')
+                    else:
+                        color = StyleSheet.VS_FOREGROUND
+
+                    font_size = "10px" if self.compact else "11px"
+                    self.usage_label.setStyleSheet(f"color: {color}; font-size: {font_size};")
+                    return
+
+            # PyTorch 方式检测
+            if BACKEND_AVAILABLE and torch.cuda.is_available():
+                device_name = torch.cuda.get_device_name(0)
+                mem_allocated = torch.cuda.memory_allocated(0) / 1024**3
+                mem_total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+
+                if self.compact:
+                    self.usage_label.setText("CUDA")
+                    self.memory_label.setText(f"{mem_allocated:.1f}G")
+                    self.setToolTip(f"{device_name}\n显存: {mem_allocated:.1f}/{mem_total:.1f}GB")
+                else:
+                    self.gpu_label.setText(f"GPU: {device_name[:15]}...")
+                    self.usage_label.setText("CUDA")
+                    self.memory_label.setText(f"{mem_allocated:.1f}/{mem_total:.1f}GB")
+            else:
+                if self.compact:
+                    self.usage_label.setText("CPU")
+                    self.memory_label.setText("--")
+                    self.setToolTip("使用 CPU 模式")
+                else:
+                    self.gpu_label.setText("GPU: CPU模式")
+                    self.usage_label.setText("N/A")
+                    self.memory_label.setText("N/A")
+
+        except Exception:
+            if self.compact:
+                self.usage_label.setText("--")
+                self.memory_label.setText("--")
+                self.setToolTip("未检测到 GPU")
+            else:
+                self.gpu_label.setText("GPU: 未检测到")
+                self.usage_label.setText("N/A")
+                self.memory_label.setText("N/A")
+
+
 class ClassificationResultTable(QTableWidget):
     """分类结果表格 - VS Code 风格"""
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setColumnCount(4)
         self.setHorizontalHeaderLabels(["文件名", "分类结果", "置信度", "路径"])
         self.setStyleSheet(StyleSheet.RESULT_TABLE)
-        
+
         # 设置表头
         header = self.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -1348,11 +2143,31 @@ class MainWindow(QMainWindow):
         self.setFixedSize(990, 660)
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        
+
         # 拖拽相关
         self._drag_pos = None
-        
+
+        # ===== P1-5: 工作线程引用 =====
+        self.training_worker: Optional[TrainingWorker] = None
+        self.training_thread: Optional[QThread] = None
+        self.classification_worker: Optional[ClassificationWorker] = None
+        self.classification_thread: Optional[QThread] = None
+        self.current_classifier: Optional[Any] = None  # ClothingClassifier 实例
+
+        # 设置存储
+        self.settings = QSettings("JiLing", "FuzhuangFenlei")
+
+        # 版本检查 - 清除旧版本的不兼容设置
+        settings_version = self.settings.value("settings/version", 0, type=int)
+        if settings_version < 2:  # 版本 2: 更新了 batch_size 和 epochs 默认值
+            self.settings.clear()
+            self.settings.setValue("settings/version", 2)
+            self.settings.sync()
+
         self._setup_ui()
+
+        # 加载保存的设置
+        self._load_settings()
     
     def _create_squircle_path(self, rect, radius: float) -> QPainterPath:
         """
@@ -1526,29 +2341,33 @@ class MainWindow(QMainWindow):
         sidebar.setObjectName("sidebar")
         sidebar.setFixedWidth(50)  # 恢复之前的宽度
         sidebar.setStyleSheet(StyleSheet.SIDEBAR)
-        
+
         layout = QVBoxLayout(sidebar)
         layout.setContentsMargins(0, 10, 0, 10)
         layout.setSpacing(10)
-        
+
         # 训练按钮
         self.btn_train = SidebarButton(svg_template=IconSvg.TRAIN, icon_size=(24, 24))
         self.btn_train.setFixedSize(50, 50)
         self.btn_train.setChecked(True)
         layout.addWidget(self.btn_train)
-        
+
         # 分类按钮
         self.btn_classify = SidebarButton(svg_template=IconSvg.CLASSIFY, icon_size=(24, 24))
         self.btn_classify.setFixedSize(50, 50)
         layout.addWidget(self.btn_classify)
-        
+
         layout.addStretch()
-        
+
+        # GPU 状态监控（紧凑模式）
+        self.gpu_status = GPUStatusWidget(compact=True)
+        layout.addWidget(self.gpu_status)
+
         # 设置按钮
         self.btn_settings = SidebarButton(svg_template=IconSvg.SETTINGS, icon_size=(28, 28))
         self.btn_settings.setFixedSize(50, 50)
         layout.addWidget(self.btn_settings)
-        
+
         return sidebar
     
     def _connect_sidebar_buttons(self):
@@ -1565,19 +2384,55 @@ class MainWindow(QMainWindow):
         self.btn_classify.clicked.connect(lambda: self._switch_page(1))
         self.btn_settings.clicked.connect(lambda: self._switch_page(2))
     
-    def _switch_page(self, page_index: int):
-        """切换页面"""
+    def _switch_page(self, page_index: int) -> None:
+        """切换页面（带动画效果）"""
+        from PySide6.QtCore import QPropertyAnimation, QEasingCurve
+
         if page_index == 2:  # 设置页面
-            # 隐藏参数区，设置页面占满整个内容区
-            self.param_stack.setFixedWidth(0)
-            self.param_stack.setVisible(False)
+            # 使用动画收起参数区
+            self._animate_param_width(0)
         else:
-            # 显示参数区
-            self.param_stack.setFixedWidth(380)
-            self.param_stack.setVisible(True)
-        
+            # 使用动画展开参数区
+            if not self.param_stack.isVisible():
+                self.param_stack.setVisible(True)
+            self._animate_param_width(380)
+
         self.param_stack.setCurrentIndex(page_index)
         self.content_stack.setCurrentIndex(page_index)
+
+    def _animate_param_width(self, target_width: int) -> None:
+        """动画改变参数区宽度"""
+        from PySide6.QtCore import QPropertyAnimation, QEasingCurve
+
+        # 如果动画已存在，停止它
+        if hasattr(self, '_param_animation') and self._param_animation:
+            self._param_animation.stop()
+
+        current_width = self.param_stack.width()
+        if current_width == target_width:
+            if target_width == 0:
+                self.param_stack.setVisible(False)
+            return
+
+        # 创建宽度动画
+        self._param_animation = QPropertyAnimation(self.param_stack, b"minimumWidth")
+        self._param_animation.setDuration(200)  # 200ms - VS Code 标准过渡时长
+        self._param_animation.setStartValue(current_width)
+        self._param_animation.setEndValue(target_width)
+        self._param_animation.setEasingCurve(QEasingCurve.OutCubic)
+
+        # 同时动画 maximumWidth
+        self._param_animation2 = QPropertyAnimation(self.param_stack, b"maximumWidth")
+        self._param_animation2.setDuration(200)
+        self._param_animation2.setStartValue(current_width)
+        self._param_animation2.setEndValue(target_width)
+        self._param_animation2.setEasingCurve(QEasingCurve.OutCubic)
+
+        if target_width == 0:
+            self._param_animation.finished.connect(lambda: self.param_stack.setVisible(False))
+
+        self._param_animation.start()
+        self._param_animation2.start()
     
     def _create_training_param_area(self) -> QWidget:
         """创建参数区"""
@@ -1649,11 +2504,11 @@ class MainWindow(QMainWindow):
         )
         card2.add_row(self.slider_epochs, show_divider=False)
         
-        # 批次大小: 范围1-128, 默认16 (步进为2的幂次更合理)
+        # 批次大小: 范围1-32, 默认8 (input_size=580 需要较小批次以避免 OOM)
         self.slider_batch = SliderRow(
-            "批次大小", 1, 128, 16,
+            "批次大小", 1, 32, 8,
             display_format="int",
-            min_label_text="1", max_label_text="128"
+            min_label_text="1", max_label_text="32"
         )
         card2.add_row(self.slider_batch, show_divider=False)
         
@@ -1775,41 +2630,51 @@ class MainWindow(QMainWindow):
         # 终端输出
         self.terminal = TerminalOutput()
         layout.addWidget(self.terminal)
-        
+
+        # 训练进度条
+        self.training_progress = QProgressBar()
+        self.training_progress.setStyleSheet(StyleSheet.PROGRESS_BAR)
+        self.training_progress.setTextVisible(True)
+        self.training_progress.setFormat("%p% - %v/%m")
+        self.training_progress.setVisible(False)
+        self.training_progress.setFixedHeight(20)
+        layout.addWidget(self.training_progress)
+
         # 分割线
         divider2 = QFrame()
         divider2.setStyleSheet(StyleSheet.DIVIDER_H)
         layout.addWidget(divider2)
-        
+
         # 底部按钮
         bottom_bar = QWidget()
         bottom_bar.setFixedHeight(80)
         bottom_layout = QHBoxLayout(bottom_bar)
         bottom_layout.setContentsMargins(0, 0, 0, 0)
         bottom_layout.setSpacing(0)
-        
-        btn_start = QPushButton("开始训练")
-        btn_start.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        btn_start.setStyleSheet(StyleSheet.BTN_START)
-        btn_start.setFont(FontManager.action_button_font())
-        btn_start.clicked.connect(self._start_training)
-        bottom_layout.addWidget(btn_start)
-        
+
+        self.btn_start_training = QPushButton("开始训练")
+        self.btn_start_training.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.btn_start_training.setStyleSheet(StyleSheet.BTN_START)
+        self.btn_start_training.setFont(FontManager.action_button_font())
+        self.btn_start_training.clicked.connect(self._start_training)
+        bottom_layout.addWidget(self.btn_start_training)
+
         # 按钮分割线
         btn_divider = QFrame()
         btn_divider.setFixedWidth(1)
         btn_divider.setStyleSheet(f"background-color: {StyleSheet.DIVIDER};")
         bottom_layout.addWidget(btn_divider)
-        
-        btn_stop = QPushButton("停止训练")
-        btn_stop.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        btn_stop.setStyleSheet(StyleSheet.BTN_STOP)
-        btn_stop.setFont(FontManager.action_button_font())
-        btn_stop.clicked.connect(self._stop_training)
-        bottom_layout.addWidget(btn_stop)
-        
+
+        self.btn_stop_training = QPushButton("停止训练")
+        self.btn_stop_training.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.btn_stop_training.setStyleSheet(StyleSheet.BTN_STOP)
+        self.btn_stop_training.setFont(FontManager.action_button_font())
+        self.btn_stop_training.clicked.connect(self._stop_training)
+        self.btn_stop_training.setEnabled(False)  # 初始禁用
+        bottom_layout.addWidget(self.btn_stop_training)
+
         layout.addWidget(bottom_bar)
-        
+
         return terminal_area
     
     def _create_classify_param_area(self) -> QWidget:
@@ -2458,10 +3323,69 @@ class MainWindow(QMainWindow):
         
         self.terminal.append_log("已恢复默认设置", "#FFCC00")
     
-    def _save_settings(self):
-        """保存设置"""
-        # TODO: 实际保存设置到配置文件
-        self.terminal.append_log("设置已保存", "#13C468")
+    def _save_settings(self) -> None:
+        """保存设置到 QSettings"""
+        try:
+            # 训练参数
+            self.settings.setValue("training/epochs", self.slider_epochs.value())
+            self.settings.setValue("training/batch_size", self.slider_batch.value())
+            self.settings.setValue("training/learning_rate", self.slider_lr.real_value())
+            self.settings.setValue("training/val_split", self.slider_val.value())
+            self.settings.setValue("training/data_path", self.file_data.path_edit.text())
+
+            # 分类参数
+            self.settings.setValue("classify/model_path", self.classify_model_file.path_edit.text())
+            self.settings.setValue("classify/input_folder", self.classify_folder.path_edit.text())
+
+            # 通用设置
+            self.settings.setValue("settings/auto_save", self.row_auto_save.isChecked())
+            self.settings.setValue("settings/remember_window", self.row_remember_window.isChecked())
+            self.settings.setValue("settings/notify", self.row_notify.isChecked())
+
+            self.settings.sync()
+            self.terminal.append_log("设置已保存", "#89D185")
+
+        except Exception as e:
+            self.terminal.append_log(f"保存设置失败: {str(e)}", "#F48771")
+
+    def _load_settings(self) -> None:
+        """从 QSettings 加载设置"""
+        try:
+            # 训练参数 - 默认值需与 SliderRow 初始化保持一致
+            epochs = self.settings.value("training/epochs", 10, type=int)  # 默认 10 轮
+            batch_size = self.settings.value("training/batch_size", 8, type=int)  # 默认 8，避免 OOM
+            learning_rate = self.settings.value("training/learning_rate", 0.001, type=float)
+            val_split = self.settings.value("training/val_split", 20, type=int)
+            data_path = self.settings.value("training/data_path", "", type=str)
+
+            self.slider_epochs.setValue(epochs)
+            self.slider_batch.setValue(batch_size)
+            self.slider_lr.set_real_value(learning_rate)
+            self.slider_val.setValue(val_split)
+            if data_path:
+                self.file_data.path_edit.setText(data_path)
+
+            # 分类参数
+            model_path = self.settings.value("classify/model_path", "", type=str)
+            input_folder = self.settings.value("classify/input_folder", "", type=str)
+
+            if model_path:
+                self.classify_model_file.path_edit.setText(model_path)
+            if input_folder:
+                self.classify_folder.path_edit.setText(input_folder)
+
+            # 通用设置
+            auto_save = self.settings.value("settings/auto_save", True, type=bool)
+            remember_window = self.settings.value("settings/remember_window", True, type=bool)
+            notify = self.settings.value("settings/notify", True, type=bool)
+
+            self.row_auto_save.setChecked(auto_save)
+            self.row_remember_window.setChecked(remember_window)
+            self.row_notify.setChecked(notify)
+
+        except Exception as e:
+            # 静默处理加载错误，使用默认值
+            pass
 
     def _toggle_maximize(self):
         """切换最大化/还原"""
@@ -2470,39 +3394,272 @@ class MainWindow(QMainWindow):
         else:
             self.showMaximized()
     
-    def _start_training(self):
+    def _start_training(self) -> None:
         """开始训练"""
-        self.terminal.append_log("开始训练...", "#13C468")
-        self.terminal.append_log(f"训练轮数: {self.slider_epochs.value()}")
-        self.terminal.append_log(f"批次大小: {self.slider_batch.value()}")
-        self.terminal.append_log(f"学习率: {self.slider_lr.real_value():.4f}")
-        self.terminal.append_log(f"验证比例: {self.slider_val.value()}%")
-        # TODO: 调用实际训练逻辑
-    
-    def _stop_training(self):
+        if not BACKEND_AVAILABLE:
+            self.terminal.append_log("后端模块不可用，无法训练", "#F48771")
+            return
+
+        # 验证数据路径
+        data_path = self.file_data.path_edit.text().strip()
+        if not data_path:
+            self.terminal.append_log("请先选择训练数据文件夹", "#F48771")
+            return
+
+        if not os.path.isabs(data_path):
+            data_path = str(PROJECT_ROOT / data_path)
+
+        if not os.path.exists(data_path):
+            self.terminal.append_log(f"数据路径不存在: {data_path}", "#F48771")
+            return
+
+        # 获取训练参数
+        num_epochs = self.slider_epochs.value()
+        batch_size = self.slider_batch.value()
+        learning_rate = self.slider_lr.real_value()
+        val_split = self.slider_val.value() / 100.0
+        model_name = self.combo_model.combo.currentText()
+
+        # 基础模型路径
+        base_model_path = self.file_model.path_edit.text().strip()
+        if base_model_path and not os.path.isabs(base_model_path):
+            base_model_path = str(PROJECT_ROOT / base_model_path)
+
+        # 构建配置
+        trainer_config = {
+            'model_name': model_name,
+            'num_classes': 3,
+            'input_size': 580,  # 固定尺寸，不可修改
+            'device': 'auto'
+        }
+
+        training_params = {
+            'data_path': data_path,
+            'num_epochs': num_epochs,
+            'batch_size': batch_size,
+            'learning_rate': learning_rate,
+            'val_split': val_split,
+            'pretrained': self.combo_mode.combo.currentIndex() == 0,
+            'base_model_path': base_model_path if self.combo_mode.combo.currentIndex() > 0 else None
+        }
+
+        # 更新UI状态
+        self.btn_start_training.setEnabled(False)
+        self.btn_stop_training.setEnabled(True)
+        self.training_progress.setVisible(True)
+        self.training_progress.setValue(0)
+        self.training_progress.setMaximum(100)
+
+        # 输出训练信息
+        self.terminal.append_log("=" * 40, "#6A9955")
+        self.terminal.append_log("开始训练任务", "#89D185")
+        self.terminal.append_log(f"模型: {model_name}")
+        self.terminal.append_log(f"训练轮数: {num_epochs}")
+        self.terminal.append_log(f"批次大小: {batch_size}")
+        self.terminal.append_log(f"学习率: {learning_rate:.6f}")
+        self.terminal.append_log(f"验证比例: {val_split:.1%}")
+        self.terminal.append_log(f"数据路径: {data_path}")
+        self.terminal.append_log("=" * 40, "#6A9955")
+
+        # 创建工作线程
+        self.training_thread = QThread()
+        self.training_worker = TrainingWorker(trainer_config, training_params)
+        self.training_worker.moveToThread(self.training_thread)
+
+        # 连接信号
+        self.training_thread.started.connect(self.training_worker.start_training)
+        self.training_worker.progress_updated.connect(self._on_training_progress)
+        self.training_worker.epoch_completed.connect(self._on_epoch_completed)
+        self.training_worker.training_completed.connect(self._on_training_completed)
+
+        # 启动线程
+        self.training_thread.start()
+
+    def _stop_training(self) -> None:
         """停止训练"""
-        self.terminal.append_log("停止训练", "#FF6B6B")
-        # TODO: 停止训练逻辑
+        if self.training_worker:
+            self.terminal.append_log("正在停止训练...", "#CCA700")
+            self.training_worker.stop_training()
+            self.btn_stop_training.setEnabled(False)
+
+    @Slot(int, str, dict)
+    def _on_training_progress(self, progress: int, message: str, metrics: Dict[str, Any]) -> None:
+        """处理训练进度更新"""
+        self.training_progress.setValue(progress)
+
+        # 如果有指标，显示详细信息
+        if metrics:
+            if 'batch_loss' in metrics:
+                # Batch 进度 - 使用单行实时更新（类似 tqdm）
+                progress_text = f"{message} | Loss={metrics['batch_loss']:.4f}, Acc={metrics['batch_acc']:.2%}"
+
+                # 检查是否是新 epoch 的第一个 batch
+                batch_info = message.split(" - ")
+                is_first_batch = False
+                if len(batch_info) > 1 and "Batch" in batch_info[1]:
+                    try:
+                        batch_str = batch_info[1].split()[1]
+                        batch_num = int(batch_str.split("/")[0])
+                        is_first_batch = (batch_num == 1)
+                    except (ValueError, IndexError):
+                        pass
+
+                # 如果是第一个 batch，追加新行；否则更新最后一行
+                if is_first_batch or not hasattr(self, '_batch_progress_started'):
+                    self.terminal.append_log(progress_text, "#808080")
+                    self._batch_progress_started = True
+                else:
+                    self.terminal.update_last_line(progress_text, "#808080")
+
+            elif 'train_loss' in metrics:
+                # Epoch 完成 - 重置标志并追加新行
+                self._batch_progress_started = False
+                self.terminal.append_log(message, "#FFFFFF")
+                self.terminal.append_log(
+                    f"  训练: Loss={metrics['train_loss']:.4f}, Acc={metrics['train_acc']:.2%}",
+                    "#9CDCFE"
+                )
+                if 'val_loss' in metrics:
+                    self.terminal.append_log(
+                        f"  验证: Loss={metrics['val_loss']:.4f}, Acc={metrics['val_acc']:.2%}",
+                        "#4EC9B0"
+                    )
+        else:
+            # 普通消息（准备阶段等）- 重置标志
+            self._batch_progress_started = False
+            self.terminal.append_log(message)
+
+        # 强制处理事件以确保 UI 更新
+        QApplication.processEvents()
+
+    @Slot(int, dict)
+    def _on_epoch_completed(self, epoch: int, metrics: Dict[str, Any]) -> None:
+        """处理Epoch完成事件"""
+        # 在终端显示 epoch 分隔线
+        self.terminal.append_log("-" * 40, "#555555")
+
+    @Slot(bool, str)
+    def _on_training_completed(self, success: bool, message: str) -> None:
+        """处理训练完成事件"""
+        # 恢复UI状态
+        self.btn_start_training.setEnabled(True)
+        self.btn_stop_training.setEnabled(False)
+
+        if success:
+            self.training_progress.setValue(100)
+            self.terminal.append_log("=" * 40, "#6A9955")
+            self.terminal.append_log(message, "#89D185")
+            self.terminal.append_log("=" * 40, "#6A9955")
+
+            # 发送系统通知（如果启用）
+            if self.row_notify.isChecked():
+                self._show_notification("训练完成", message)
+        else:
+            self.training_progress.setVisible(False)
+            self.terminal.append_log(message, "#F48771")
+
+        # 清理线程
+        self._cleanup_training_thread()
+
+    def _cleanup_training_thread(self) -> None:
+        """清理训练线程"""
+        if self.training_thread:
+            self.training_thread.quit()
+            self.training_thread.wait(5000)  # 等待最多5秒
+            self.training_thread = None
+            self.training_worker = None
+
+    def _show_notification(self, title: str, message: str) -> None:
+        """显示系统通知"""
+        # Windows 通知（简单实现）
+        try:
+            from PySide6.QtWidgets import QSystemTrayIcon
+            if hasattr(self, '_tray_icon') and self._tray_icon:
+                self._tray_icon.showMessage(title, message)
+        except Exception:
+            pass  # 静默处理通知失败
     
     # ===== 分类功能 =====
-    def _load_classify_model(self):
+    def _load_classify_model(self) -> None:
         """加载分类模型"""
-        model_path = self.classify_model_file.path_edit.text()
+        model_path = self.classify_model_file.path_edit.text().strip()
+
         if not model_path:
             self._update_model_status("未选择模型", False)
+            self.terminal.append_log("请先选择模型文件", "#F48771")
             return
-        
-        # TODO: 实际加载模型逻辑
-        self._update_model_status("已加载", True)
-    
-    def _use_default_model(self):
+
+        # 处理相对路径
+        if not os.path.isabs(model_path):
+            model_path = str(PROJECT_ROOT / model_path)
+
+        if not os.path.exists(model_path):
+            self._update_model_status("文件不存在", False)
+            self.terminal.append_log(f"模型文件不存在: {model_path}", "#F48771")
+            return
+
+        if not BACKEND_AVAILABLE:
+            self._update_model_status("后端不可用", False)
+            self.terminal.append_log("后端模块不可用，无法加载模型", "#F48771")
+            return
+
+        try:
+            self._update_model_status("加载中...", False)
+            self.terminal.append_log(f"正在加载模型: {Path(model_path).name}")
+
+            # 验证模型文件
+            checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
+
+            # 从检查点获取模型名称
+            model_name = checkpoint.get('model_name', 'tf_efficientnetv2_s')
+
+            # 创建分类器
+            self.current_classifier = ClothingClassifier(
+                model_path=model_path,
+                device='auto',
+                model_name=model_name
+            )
+
+            self._update_model_status("已加载", True)
+            self.terminal.append_log(f"模型加载成功: {Path(model_path).name}", "#89D185")
+
+            # 保存最近使用的模型路径
+            self.settings.setValue("paths/last_model", model_path)
+
+        except Exception as e:
+            self._update_model_status("加载失败", False)
+            self.terminal.append_log(f"模型加载失败: {str(e)}", "#F48771")
+            self.current_classifier = None
+
+    def _use_default_model(self) -> None:
         """使用默认模型"""
-        # TODO: 加载默认模型
-        default_path = "models/best_model.pth"
-        self.classify_model_file.path_edit.setText(default_path)
-        self._update_model_status("已加载默认模型", True)
-    
-    def _update_model_status(self, status: str, loaded: bool):
+        # 查找默认模型
+        default_paths = [
+            PROJECT_ROOT / "models" / "best_model.pth",
+            PROJECT_ROOT / "models" / "JiLing_model.pth",
+        ]
+
+        # 查找 models 目录下最新的模型
+        models_dir = PROJECT_ROOT / "models"
+        if models_dir.exists():
+            pth_files = list(models_dir.glob("*.pth"))
+            if pth_files:
+                # 按修改时间排序，取最新的
+                pth_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+                default_paths.insert(0, pth_files[0])
+
+        # 尝试加载第一个存在的模型
+        for default_path in default_paths:
+            if default_path.exists():
+                self.classify_model_file.path_edit.setText(str(default_path))
+                self._load_classify_model()
+                return
+
+        # 没有找到任何模型
+        self._update_model_status("未找到模型", False)
+        self.terminal.append_log("未找到默认模型，请手动选择模型文件", "#CCA700")
+
+    def _update_model_status(self, status: str, loaded: bool) -> None:
         """更新模型状态显示"""
         if loaded:
             self.model_status_indicator.setText(status)
@@ -2527,43 +3684,140 @@ class MainWindow(QMainWindow):
                 }}
             """)
     
-    def _start_classification(self):
+    def _start_classification(self) -> None:
         """开始分类"""
-        # 显示进度条
+        if not BACKEND_AVAILABLE:
+            self.terminal.append_log("后端模块不可用，无法分类", "#F48771")
+            return
+
+        # 检查模型是否已加载
+        if not self.current_classifier:
+            self.terminal.append_log("请先加载分类模型", "#F48771")
+            self._update_model_status("未加载模型", False)
+            return
+
+        # 收集要分类的图像路径
+        image_paths = []
+
+        # 单个文件
+        single_file = self.classify_single_file.path_edit.text().strip()
+        if single_file:
+            if not os.path.isabs(single_file):
+                single_file = str(PROJECT_ROOT / single_file)
+            if os.path.exists(single_file):
+                image_paths.append(single_file)
+
+        # 文件夹
+        folder = self.classify_folder.path_edit.text().strip()
+        if folder:
+            if not os.path.isabs(folder):
+                folder = str(PROJECT_ROOT / folder)
+            if os.path.exists(folder):
+                # 收集所有图像文件
+                for ext in ['*.jpg', '*.jpeg', '*.png', '*.bmp', '*.webp']:
+                    image_paths.extend([str(p) for p in Path(folder).glob(ext)])
+                    image_paths.extend([str(p) for p in Path(folder).glob(ext.upper())])
+
+        if not image_paths:
+            self.terminal.append_log("未找到要分类的图像", "#F48771")
+            return
+
+        # 去重
+        image_paths = list(set(image_paths))
+
+        # 确定输出文件夹 - 使用输入文件夹作为输出目录
+        output_folder = folder if folder else os.path.dirname(image_paths[0])
+        if not os.path.isabs(output_folder):
+            output_folder = str(PROJECT_ROOT / output_folder)
+
+        # 更新UI状态
         self.classify_progress.setVisible(True)
         self.classify_progress.setValue(0)
-        
-        # 获取输入路径
-        single_file = self.classify_single_file.path_edit.text()
-        folder = self.classify_folder.path_edit.text()
-        
-        if not single_file and not folder:
-            self._update_model_status("请选择图像", False)
-            return
-        
-        # TODO: 实际分类逻辑
-        # 这里添加演示数据
-        import random
-        categories = ["主图", "细节", "吊牌"]
-        
-        # 模拟分类结果
-        demo_results = [
-            ("IMG_001.jpg", random.choice(categories), random.uniform(0.7, 0.99), "/path/to/主图/IMG_001.jpg"),
-            ("IMG_002.jpg", random.choice(categories), random.uniform(0.7, 0.99), "/path/to/细节/IMG_002.jpg"),
-            ("IMG_003.jpg", random.choice(categories), random.uniform(0.7, 0.99), "/path/to/吊牌/IMG_003.jpg"),
-            ("IMG_004.jpg", random.choice(categories), random.uniform(0.7, 0.99), "/path/to/主图/IMG_004.jpg"),
-            ("IMG_005.jpg", random.choice(categories), random.uniform(0.7, 0.99), "/path/to/细节/IMG_005.jpg"),
-        ]
-        
-        for i, (name, cat, conf, path) in enumerate(demo_results):
-            self.result_table.add_result(name, cat, conf, path)
-            self.classify_progress.setValue(int((i + 1) / len(demo_results) * 100))
-        
+        self.result_table.clear_results()
+
+        self.terminal.append_log("=" * 40, "#6A9955")
+        self.terminal.append_log(f"开始分类 {len(image_paths)} 张图片", "#89D185")
+        self.terminal.append_log(f"输出目录: {output_folder}")
+        self.terminal.append_log("=" * 40, "#6A9955")
+
+        # 创建工作线程
+        self.classification_thread = QThread()
+        self.classification_worker = ClassificationWorker(
+            image_paths=image_paths,
+            classifier=self.current_classifier,
+            output_folder=output_folder
+        )
+        self.classification_worker.moveToThread(self.classification_thread)
+
+        # 连接信号
+        self.classification_thread.started.connect(self.classification_worker.start_classification)
+        self.classification_worker.progress_updated.connect(self._on_classification_progress)
+        self.classification_worker.classification_completed.connect(self._on_classification_completed)
+
+        # 启动线程
+        self.classification_thread.start()
+
+    @Slot(int, str)
+    def _on_classification_progress(self, progress: int, message: str) -> None:
+        """处理分类进度更新"""
+        self.classify_progress.setValue(progress)
+        self.terminal.append_log(message)
+
+    @Slot(list)
+    def _on_classification_completed(self, results: List[Dict[str, Any]]) -> None:
+        """处理分类完成事件"""
+        # 更新结果表格
+        success_count = 0
+        error_count = 0
+
+        for item in results:
+            path = item.get('path', '')
+            result = item.get('result', {})
+
+            predicted_class = result.get('predicted_class', 'unknown')
+            confidence = result.get('confidence', 0.0)
+
+            if predicted_class == 'error':
+                error_count += 1
+            else:
+                success_count += 1
+                # 添加到结果表格
+                self.result_table.add_result(
+                    Path(path).name,
+                    predicted_class,
+                    confidence,
+                    path
+                )
+
         # 更新统计
-        self.classify_stats_label.setText(f"共 {len(demo_results)} 张图片")
-        self.classify_progress.setVisible(False)
-    
-    def _clear_classification_results(self):
+        self.classify_stats_label.setText(f"共 {len(results)} 张图片 (成功: {success_count}, 失败: {error_count})")
+        self.classify_progress.setValue(100)
+
+        # 日志输出
+        self.terminal.append_log("=" * 40, "#6A9955")
+        self.terminal.append_log(f"分类完成: {success_count} 成功, {error_count} 失败", "#89D185")
+        self.terminal.append_log("=" * 40, "#6A9955")
+
+        # 发送通知
+        if self.row_notify.isChecked():
+            self._show_notification("分类完成", f"成功分类 {success_count} 张图片")
+
+        # 清理线程
+        self._cleanup_classification_thread()
+
+        # 延迟隐藏进度条
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(2000, lambda: self.classify_progress.setVisible(False))
+
+    def _cleanup_classification_thread(self) -> None:
+        """清理分类线程"""
+        if self.classification_thread:
+            self.classification_thread.quit()
+            self.classification_thread.wait(5000)
+            self.classification_thread = None
+            self.classification_worker = None
+
+    def _clear_classification_results(self) -> None:
         """清空分类结果"""
         self.result_table.clear_results()
         self.classify_stats_label.setText("共 0 张图片")
@@ -2606,28 +3860,47 @@ def main():
     if hasattr(Qt, 'AA_UseHighDpiPixmaps'):
         QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
-    app = QApplication(sys.argv)
-    app.setApplicationName("JiLing 服装分类系统")
-    
-    # 确保图标存在
-    _ensure_icons()
-    
-    # 加载 MiSans 字体
-    if FontManager.load_fonts():
-        print("MiSans 字体加载成功")
-        # 设置应用默认字体为 MiSans
-        default_font = FontManager.get_font(12, QFont.Normal)
-        app.setFont(default_font)
-    else:
-        print("警告: MiSans 字体加载失败，使用系统默认字体")
-        font = QFont("Microsoft YaHei", 10)
-        app.setFont(font)
-    
-    window = MainWindow()
-    window.show()
-    
-    sys.exit(app.exec())
+    try:
+        print("[DEBUG] 创建 QApplication...")
+        app = QApplication(sys.argv)
+        app.setApplicationName("JiLing 服装分类系统")
+        print("[DEBUG] QApplication 创建成功")
+
+        # 确保图标存在
+        print("[DEBUG] 确保图标存在...")
+        _ensure_icons()
+        print("[DEBUG] 图标检查完成")
+
+        # 加载 MiSans 字体
+        print("[DEBUG] 加载 MiSans 字体...")
+        if FontManager.load_fonts():
+            print("[DEBUG] MiSans 字体加载成功")
+            # 设置应用默认字体为 MiSans
+            default_font = FontManager.get_font(12, QFont.Normal)
+            app.setFont(default_font)
+        else:
+            print("[DEBUG] 警告: MiSans 字体加载失败，使用系统默认字体")
+            font = QFont("Microsoft YaHei", 10)
+            app.setFont(font)
+
+        print("[DEBUG] 创建 MainWindow...")
+        window = MainWindow()
+        print("[DEBUG] MainWindow 创建成功")
+
+        print("[DEBUG] 显示窗口...")
+        window.show()
+        print(f"[DEBUG] 窗口已显示, 尺寸: {window.size()}, 位置: {window.pos()}, 可见: {window.isVisible()}")
+
+        print("[DEBUG] 进入事件循环...")
+        sys.exit(app.exec())
+
+    except Exception as e:
+        import traceback
+        print(f"[ERROR] 程序启动失败: {e}")
+        traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
+    print("[DEBUG] 程序开始...")
     main()

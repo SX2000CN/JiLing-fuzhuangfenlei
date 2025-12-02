@@ -18,13 +18,14 @@
 4. **测试环境** - 检查依赖安装
 
 ### 快捷启动
-- 现代界面: `launchers\快速启动-现代界面.bat`
-- 传统界面: `launchers\快速启动-传统界面.bat`
+- 新界面: `启动-新界面.bat`（根目录）
+- 传统界面: `启动-传统界面.bat`（根目录）或 `launchers\快速启动-传统界面.bat`
+- 命令行分类: `launchers\run_classify.bat`（生产环境核心工具）
 
 ## 🎯 功能特性
 
 ### 桌面应用
-- **双界面**：现代化 UI (Ant Design) + 传统 UI (PySide6)
+- **双界面**：新界面 (VS Code 风格) + 传统 UI (PySide6)
 - **自动进程管理**：重启时自动关闭旧进程
 - **实时预览**：分类结果即时显示
 
@@ -76,22 +77,33 @@ python scripts/fast_classify.py
 JiLing-fuzhuangfenlei/
 ├── README.md
 ├── requirements.txt
-├── config/                     # 配置文件
+├── start.bat                   # 主菜单启动器
+├── 启动-新界面.bat             # 快捷启动-新界面
+├── 启动-传统界面.bat           # 快捷启动-传统界面
+├── launchers/                  # 启动器目录
+│   ├── classify_cli.py        # 命令行分类工具（生产核心）
+│   ├── run_classify.bat       # 生产环境启动脚本
+│   ├── launch.py              # 通用启动器
+│   └── gui_main.py            # GUI启动入口
 ├── src/                        # 源代码
-│   ├── main.py                # 主程序入口
-│   ├── ui/                    # 用户界面
-│   ├── core/                  # 核心功能
+│   ├── core/                  # 核心算法
+│   │   ├── model_factory.py   # 模型工厂
+│   │   ├── pytorch_classifier.py  # 分类器
+│   │   └── pytorch_trainer.py # 训练器
+│   ├── gui/                   # 图形界面
+│   │   ├── main_window.py     # 传统界面
+│   │   └── native_ui.py       # 新界面
 │   └── utils/                 # 工具函数
-├── scripts/                   # 独立脚本
-├── models/                    # 模型文件
-├── data/                      # 数据集
-├── logs/                      # 日志文件
-└── outputs/                   # 输出结果
+├── config/                     # 配置文件
+├── models/                     # 模型文件
+├── data/                       # 数据集
+├── logs/                       # 日志文件
+└── docs/                       # 项目文档
 ```
 
 ## 🎨 使用说明
 
-详见 [docs/usage.md](docs/usage.md)
+详见 [docs/项目完整文档.md](docs/项目完整文档.md) 或 [快速开始.md](快速开始.md)
 
 ## 📈 性能指标
 

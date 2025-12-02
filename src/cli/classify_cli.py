@@ -17,7 +17,7 @@ from tqdm import tqdm
 import concurrent.futures
 
 # 添加项目路径
-project_root = Path(__file__).parent.parent  # 返回到项目根目录
+project_root = Path(__file__).parent.parent.parent  # src/cli/ -> src/ -> 项目根目录
 sys.path.insert(0, str(project_root))
 
 try:
@@ -25,8 +25,8 @@ try:
     from PySide6.QtWidgets import QApplication
     from src.core.pytorch_classifier import ClothingClassifier
 except ImportError as e:
-    print(f"❌ 导入失败: {e}")
-    print("请确保已安装PySide6和相关依赖")
+    print(f"[ERROR] Import failed: {e}")
+    print("Please ensure PySide6 and dependencies are installed")
     sys.exit(1)
 
 
@@ -46,7 +46,7 @@ class CommandLineClassifier:
         
     def load_gui_settings(self):
         """加载GUI中保存的设置"""
-        print("📂 加载GUI设置...")
+        print("[INFO] Loading GUI settings...")
         
         # 获取记忆的路径
         self.classification_folder = self.settings.value("last_classification_folder", "")
@@ -79,16 +79,16 @@ class CommandLineClassifier:
     
     def initialize_classifier(self):
         """初始化分类器"""
-        print("🤖 初始化分类器...")
-        
+        print("[INFO] Initializing classifier...")
+
         # 查找模型文件
         model_path = self.find_latest_model()
         if not model_path:
-            print("❌ 未找到可用的模型文件")
+            print("[ERROR] No available model file found")
             return False
-        
-        print(f"  使用模型: {model_path}")
-        
+
+        print(f"  Model: {model_path}")
+
         try:
             # 创建分类器，使用正确的配置
             self.classifier = ClothingClassifier(
@@ -96,11 +96,11 @@ class CommandLineClassifier:
                 model_name='tf_efficientnetv2_s',  # 使用正确的模型名称
                 device='auto'
             )
-            print("✅ 分类器初始化成功")
+            print("[OK] Classifier initialized successfully")
             return True
-            
+
         except Exception as e:
-            print(f"❌ 分类器初始化失败: {e}")
+            print(f"[ERROR] Classifier initialization failed: {e}")
             return False
     
     def get_image_files(self, folder_path: str) -> List[str]:
@@ -127,13 +127,13 @@ class CommandLineClassifier:
             batch_end = min(batch_start + batch_size, total_files)
             batch_paths = image_files[batch_start:batch_end]
             
-            print(f"📦 处理批次 {batch_start//batch_size + 1}, 图片: {batch_start+1}-{batch_end}")
-            
+            print(f"[BATCH] Processing batch {batch_start//batch_size + 1}, images: {batch_start+1}-{batch_end}")
+
             # 批量预处理图像 - 多线程并行优化
             preprocess_start = time.time()
             batch_tensors = []
             valid_paths = []
-            
+
             def preprocess_single_image(image_path):
                 try:
                     # 使用PIL + 原生transform - 最佳性能平衡
@@ -142,11 +142,11 @@ class CommandLineClassifier:
                     return image_path, input_tensor
                 except Exception as e:
                     return image_path, None, str(e)
-            
+
             # 20线程 - 经过系统测试验证的最优配置 (29.48张/秒)
             optimal_workers = 20
-            
-            print(f"🚀 启用{optimal_workers}线程最优配置")
+
+            print(f"[PERF] Using {optimal_workers} threads (optimal config)")
             
             with concurrent.futures.ThreadPoolExecutor(max_workers=optimal_workers) as executor:
                 parallel_results = list(executor.map(preprocess_single_image, batch_paths))
@@ -169,7 +169,7 @@ class CommandLineClassifier:
             
             preprocess_end = time.time()
             preprocess_time = preprocess_end - preprocess_start
-            print(f"⏱️ 批次预处理完成，{len(batch_tensors)}张图片，耗时: {preprocess_time:.3f}秒")
+            print(f"[TIME] Batch preprocess done, {len(batch_tensors)} images, time: {preprocess_time:.3f}s")
             
             if not batch_tensors:
                 continue
@@ -188,7 +188,7 @@ class CommandLineClassifier:
                 
                 inference_end = time.time()
                 inference_time = inference_end - inference_start
-                print(f"⏱️ GPU推理完成，{len(batch_tensors)}张图片，耗时: {inference_time:.3f}秒")
+                print(f"[TIME] GPU inference done, {len(batch_tensors)} images, time: {inference_time:.3f}s")
                 
                 # 处理批量结果
                 for i, (image_path, confidence, predicted_idx) in enumerate(zip(valid_paths, confidences, predicted)):
@@ -226,11 +226,11 @@ class CommandLineClassifier:
     def classify_images(self, image_files: List[str]):
         """分类图像"""
         if not image_files:
-            print("❌ 没有找到图像文件")
+            print("[ERROR] No image files found")
             return
-        
+
         total_files = len(image_files)
-        print(f"📊 开始分类 {total_files} 张图片...")
+        print(f"[INFO] Starting classification of {total_files} images...")
         print("=" * 60)
         
         # 创建输出目录 - 使用图片所在文件夹的父目录（与GUI版本一致）
@@ -268,7 +268,7 @@ class CommandLineClassifier:
             else:
                 batch_size = 32  # CPU模式降级
             
-            print(f"⭐ GPU优化模式 - 批次大小 {batch_size} (GPU: {gpu_memory_gb:.1f}GB)")
+            print(f"[GPU] Optimized mode - batch size {batch_size} (GPU: {gpu_memory_gb:.1f}GB)")
             
             # 使用优化的批量推理方法（与GUI相同）
             batch_results = self._batch_predict_optimized(image_files, batch_size)
@@ -290,102 +290,102 @@ class CommandLineClassifier:
                     stats[predicted_class] += 1
                 else:
                     # 如果预测类别不在已知类别中，跳过移动但显示警告
-                    print(f"⚠️ 未知类别: {predicted_class}，跳过移动 {file_name}")
+                    print(f"[WARN] Unknown category: {predicted_class}, skipping {file_name}")
                     continue
-                
+
                 # 显示进度
                 progress = (i + 1) / total_files * 100
-                print(f"📦 [{progress:5.1f}%] {file_name} → {predicted_class} ({confidence:.2f})")
-        
+                print(f"[PROG] [{progress:5.1f}%] {file_name} -> {predicted_class} ({confidence:.2f})")
+
         except KeyboardInterrupt:
-            print("\n⚠️ 用户中断分类")
+            print("\n[WARN] User interrupted")
             return
         except Exception as e:
-            print(f"\n❌ 分类过程出错: {e}")
+            print(f"\n[ERROR] Classification error: {e}")
             return
-        
+
         # 显示最终统计
         elapsed_time = time.time() - start_time
         speed = total_files / elapsed_time
-        
+
         print("=" * 60)
-        print("🎉 分类完成!")
-        print(f"📊 分类统计:")
+        print("[DONE] Classification complete!")
+        print(f"[STATS] Classification results:")
         for category, count in stats.items():
             percentage = count / total_files * 100
-            print(f"  {category}: {count} 张 ({percentage:.1f}%)")
-        
-        print(f"⏱️ 总耗时: {elapsed_time:.2f} 秒")
-        print(f"⚡ 平均速度: {speed:.2f} 张/秒")
+            print(f"  {category}: {count} images ({percentage:.1f}%)")
+
+        print(f"[TIME] Total time: {elapsed_time:.2f}s")
+        print(f"[PERF] Average speed: {speed:.2f} images/s")
         print("=" * 60)
     
     def run(self):
         """运行分类"""
-        print("🚀 JiLing服装分类系统 - 命令行版本")
+        print("[START] JiLing Clothing Classification System - CLI")
         print("=" * 60)
-        
+
         # 加载设置
         if not self.load_gui_settings():
-            print("❌ 未找到GUI保存的路径设置")
-            print("请先在GUI中选择并使用一次分类功能")
+            print("[ERROR] GUI settings not found")
+            print("Please use the GUI to set up classification path first")
             self.wait_for_exit()
             return
-        
+
         # 检查路径
         if not os.path.exists(self.classification_folder):
-            print(f"❌ 分类路径不存在: {self.classification_folder}")
+            print(f"[ERROR] Classification path not found: {self.classification_folder}")
             self.wait_for_exit()
             return
-        
+
         # 初始化分类器
         if not self.initialize_classifier():
             self.wait_for_exit()
             return
-        
+
         # 获取图像文件
         image_files = self.get_image_files(self.classification_folder)
         if not image_files:
-            print(f"❌ 在路径中未找到图像文件: {self.classification_folder}")
+            print(f"[ERROR] No image files found in: {self.classification_folder}")
             self.wait_for_exit()
             return
-        
+
         # 开始分类
         self.classify_images(image_files)
-        
+
         # 等待用户按回车退出
         self.wait_for_exit()
-    
+
     def wait_for_exit(self):
         """等待用户按回车退出"""
         if self.no_pause:
-            print("👋 再见!")
+            print("[EXIT] Goodbye!")
             return
-        
-        print("\n💡 按回车键退出...")
+
+        print("\n[TIP] Press Enter to exit...")
         try:
             input()
         except KeyboardInterrupt:
             pass
-        print("👋 再见!")
+        print("[EXIT] Goodbye!")
 
 
 def main():
     """主函数"""
     # 解析命令行参数
-    parser = argparse.ArgumentParser(description='JiLing服装分类系统 - 命令行版本')
-    parser.add_argument('--no-pause', action='store_true', 
-                       help='完成后不等待用户按键（用于bat脚本调用）')
+    parser = argparse.ArgumentParser(description='JiLing Clothing Classification System - CLI')
+    parser.add_argument('--no-pause', action='store_true',
+                       help='Do not wait for keypress after completion')
     args = parser.parse_args()
-    
+
     try:
         classifier = CommandLineClassifier(no_pause=args.no_pause)
         classifier.run()
     except KeyboardInterrupt:
-        print("\n👋 用户取消，再见!")
+        print("\n[EXIT] User cancelled, goodbye!")
     except Exception as e:
-        print(f"\n❌ 程序异常: {e}")
+        print(f"\n[ERROR] Program exception: {e}")
         if not args.no_pause:
-            print("💡 按回车键退出...")
+            print("[TIP] Press Enter to exit...")
             try:
                 input()
             except KeyboardInterrupt:
