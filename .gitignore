@@ -72,3 +72,15 @@ interactive_test.py
 # 澶囦唤鏂囦欢
 *_fixed.py
 *_backup.py
+
+# Node.js
+node_modules/
+
+# 调试输出文件
+debug_output.txt
+debug_stdout.txt
+debug_test.py
+nul
+
+# 临时调试目录
+.tmp_icon_debug/

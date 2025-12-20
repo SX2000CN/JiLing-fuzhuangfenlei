@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python run_new_gui.py:*)",
+      "Bash(timeout /t 3)",
+      "Bash(/c/Users/Administrator/AppData/Local/Programs/Python/Python313/python:*)",
+      "Bash(echo:*)",
+      "Bash(python.exe run_new_gui.py:*)",
+      "Bash(cmd.exe /c \"python run_new_gui.py\":*)",
+      "Bash(cmd.exe /c \"start python run_new_gui.py\")",
+      "Bash(cmd.exe /c \"cd /d d:\\\\桌面\\\\编程\\\\JiLing-fuzhuangfenlei && python run_new_gui.py 2>&1\")",
+      "Bash(python:*)",
+      "Bash(powershell.exe -Command:*)",
+      "Bash(findstr:*)",
+      "Bash(tree:*)",
+      "Bash(dir:*)",
+      "Bash(cat:*)",
+      "Bash(cmd.exe /c \"cd /d d:\\\\桌面\\\\编程\\\\JiLing-fuzhuangfenlei && python debug_test.py\")",
+      "Bash(where:*)",
+      "Bash(\"C:/Users/Administrator/AppData/Local/Programs/Python/Python313/python.exe\" \"d:/桌面/编程/JiLing-fuzhuangfenlei/run_new_gui.py\")",
+      "Bash(cmd.exe /c \"C:\\\\Users\\\\Administrator\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe d:\\\\桌面\\\\编程\\\\JiLing-fuzhuangfenlei\\\\run_new_gui.py 2>&1\")",
+      "Bash(del:*)",
+      "Bash(cmd.exe:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}
