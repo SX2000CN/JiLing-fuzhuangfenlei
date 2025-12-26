@@ -51,11 +51,12 @@ class ClassificationWorker(QObject):
     classification_completed = Signal(list)
 
     def __init__(self, image_paths: List[str], classifier: Optional[Any] = None,
-                 output_folder: Optional[str] = None):
+                 output_folder: Optional[str] = None, confidence_threshold: float = 0.5):
         super().__init__()
         self.image_paths = [str(p) for p in image_paths]
         self.classifier = classifier
         self.output_folder = output_folder
+        self.confidence_threshold = confidence_threshold
 
     def start_classification(self) -> None:
         """开始分类任务"""
@@ -173,7 +174,8 @@ class ClassificationWorker(QObject):
                                 'predicted_class': predicted_class,
                                 'confidence': confidence_score,
                                 'class_probabilities': class_probs,
-                                'image_path': str(dest_file)
+                                'image_path': str(dest_file),
+                                'uncertain': confidence_score < self.confidence_threshold
                             }
                         })
 

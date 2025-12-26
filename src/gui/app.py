@@ -50,10 +50,11 @@ if _src_path not in sys.path:
     sys.path.insert(0, _src_path)
 
 from .theme import StyleSheet, theme_manager, ColorTokens
-from .utils import FontManager, IconSvg
+from .utils import FontManager, IconSvg, SettingsManager
 from .components import SidebarButton, WindowControlBar
 from .pages import TrainingPage, ClassificationPage, SettingsPage
 from .workers import TrainingWorker, ClassificationWorker
+from core import ClothingClassifier
 
 
 class MainWindow(QMainWindow):
@@ -93,6 +94,7 @@ class MainWindow(QMainWindow):
 
         # 设置存储
         self.settings = QSettings("JiLing", "FuzhuangFenlei")
+        self.settings_manager = SettingsManager()
 
         # 版本检查
         settings_version = self.settings.value("settings/version", 0, type=int)
@@ -329,6 +331,7 @@ class MainWindow(QMainWindow):
 
         # 设置页面信号
         self.settings_page.theme_changed.connect(self._on_theme_setting_changed)
+        self.settings_page.settings_changed.connect(self._on_settings_changed)
         self.settings_page.minimize_requested.connect(self.showMinimized)
         self.settings_page.maximize_requested.connect(self._toggle_maximize)
         self.settings_page.close_requested.connect(self.close)
@@ -343,6 +346,11 @@ class MainWindow(QMainWindow):
         # 保存主题设置
         self.settings.setValue("appearance/theme", theme)
 
+    def _on_settings_changed(self, gui_settings: dict):
+        """处理设置变化 - 保存到 SettingsManager"""
+        self.settings_manager.from_gui_settings(gui_settings)
+        self.settings_manager.save()
+
     # ========== 训练功能 ==========
 
     def _start_training(self):
@@ -356,11 +364,79 @@ class MainWindow(QMainWindow):
         self.training_page.append_log("[INFO] 开始训练...")
         self.training_page.set_training_state(True)
 
-        # TODO: 实现实际训练逻辑
+        # 从设置读取性能参数
+        num_workers = self.settings_manager.get("performance.workers", 4)
+        device = self.settings_manager.get("model.device", "auto")
+        patience = self.settings_manager.get("training.patience", 10)
+        amp_enabled = self.settings_manager.get("performance.amp_enabled", False)
+
+        # 训练器配置
+        trainer_config = {
+            'model_name': params['model_type'],
+            'device': device,
+            'amp_enabled': amp_enabled
+        }
+
+        # 训练参数
+        training_params = {
+            'data_path': params['data_path'],
+            'num_epochs': params['epochs'],
+            'batch_size': params['batch_size'],
+            'learning_rate': params['learning_rate'],
+            'val_split': 0.2,
+            'pretrained': True,
+            'num_workers': num_workers,
+            'patience': patience
+        }
+
         self.training_page.append_log(f"[INFO] 模型类型: {params['model_type']}")
         self.training_page.append_log(f"[INFO] 训练轮数: {params['epochs']}")
         self.training_page.append_log(f"[INFO] 批次大小: {params['batch_size']}")
         self.training_page.append_log(f"[INFO] 学习率: {params['learning_rate']}")
+        self.training_page.append_log(f"[INFO] 工作线程: {num_workers}")
+        self.training_page.append_log(f"[INFO] 早停耐心值: {patience}")
+        self.training_page.append_log(f"[INFO] 混合精度: {'启用' if amp_enabled else '禁用'}")
+
+        # 创建工作线程
+        self.training_worker = TrainingWorker(trainer_config, training_params)
+        self.training_thread = QThread()
+        self.training_worker.moveToThread(self.training_thread)
+
+        # 连接信号
+        self.training_thread.started.connect(self.training_worker.start_training)
+        self.training_worker.progress_updated.connect(self._on_training_progress)
+        self.training_worker.training_completed.connect(self._on_training_completed)
+        self.training_worker.epoch_completed.connect(self._on_epoch_completed)
+
+        self.training_thread.start()
+
+    def _on_training_progress(self, progress: int, message: str, metrics: dict):
+        """训练进度更新"""
+        self.training_page.set_progress(progress)
+        if message:
+            self.training_page.append_log(f"[INFO] {message}")
+
+    def _on_training_completed(self, success: bool, message: str):
+        """训练完成"""
+        self.training_page.set_training_state(False)
+        log_level = "INFO" if success else "ERROR"
+        self.training_page.append_log(f"[{log_level}] {message}")
+
+        # 清理线程
+        if self.training_thread:
+            self.training_thread.quit()
+            self.training_thread.wait()
+
+    def _on_epoch_completed(self, epoch: int, metrics: dict):
+        """轮次完成"""
+        train_loss = metrics.get('train_loss', 0)
+        train_acc = metrics.get('train_acc', 0)
+        val_loss = metrics.get('val_loss', 0)
+        val_acc = metrics.get('val_acc', 0)
+        self.training_page.append_log(
+            f"[INFO] Epoch {epoch}: train_loss={train_loss:.4f}, train_acc={train_acc:.2%}, "
+            f"val_loss={val_loss:.4f}, val_acc={val_acc:.2%}"
+        )
 
     def _stop_training(self):
         """停止训练"""
@@ -379,13 +455,31 @@ class MainWindow(QMainWindow):
             return
 
         self.classification_page.set_model_status(True, "加载中...")
-        # TODO: 实现实际加载逻辑
-        self.classification_page.set_model_status(True, "已加载")
+        try:
+            device = self.settings_manager.get("model.device", "auto")
+            self.current_classifier = ClothingClassifier(model_path, device=device)
+            self.classification_page.set_model_status(True, "已加载")
+        except Exception as e:
+            self.current_classifier = None
+            self.classification_page.set_model_status(False, "加载失败")
+            QMessageBox.critical(self, "错误", f"模型加载失败: {e}")
 
     def _use_default_model(self):
         """使用默认模型"""
-        self.classification_page.set_model_status(True, "默认模型")
-        # TODO: 实现默认模型加载逻辑
+        default_path = PROJECT_ROOT / "models" / "saved_models" / "best_model.pth"
+        if not default_path.exists():
+            QMessageBox.warning(self, "警告", f"默认模型不存在: {default_path}")
+            return
+
+        self.classification_page.set_model_status(True, "加载中...")
+        try:
+            device = self.settings_manager.get("model.device", "auto")
+            self.current_classifier = ClothingClassifier(str(default_path), device=device)
+            self.classification_page.set_model_status(True, "已加载（默认）")
+        except Exception as e:
+            self.current_classifier = None
+            self.classification_page.set_model_status(False, "加载失败")
+            QMessageBox.critical(self, "错误", f"默认模型加载失败: {e}")
 
     def _start_classification(self):
         """开始分类"""
@@ -396,8 +490,88 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "警告", "请选择图片文件或文件夹")
             return
 
+        if not self.current_classifier:
+            QMessageBox.warning(self, "警告", "请先加载模型")
+            return
+
+        # 收集图片路径
+        image_paths = []
+        if folder_path:
+            folder = Path(folder_path)
+            for ext in ['*.jpg', '*.jpeg', '*.png', '*.bmp', '*.webp']:
+                image_paths.extend(folder.glob(ext))
+                image_paths.extend(folder.glob(ext.upper()))
+        if single_file:
+            image_paths.append(Path(single_file))
+
+        if not image_paths:
+            QMessageBox.warning(self, "警告", "未找到图片文件")
+            return
+
+        # 从设置读取置信度阈值
+        confidence_threshold = self.settings_manager.get("model.confidence_threshold", 0.5)
+
         self.classification_page.set_progress(0, True)
-        # TODO: 实现实际分类逻辑
+
+        # 创建工作线程
+        self.classification_worker = ClassificationWorker(
+            image_paths=[str(p) for p in image_paths],
+            classifier=self.current_classifier,
+            output_folder=folder_path,
+            confidence_threshold=confidence_threshold
+        )
+        self.classification_thread = QThread()
+        self.classification_worker.moveToThread(self.classification_thread)
+
+        # 连接信号
+        self.classification_thread.started.connect(self.classification_worker.start_classification)
+        self.classification_worker.progress_updated.connect(self._on_classification_progress)
+        self.classification_worker.classification_completed.connect(self._on_classification_completed)
+
+        self.classification_thread.start()
+
+    def _on_classification_progress(self, progress: int, message: str):
+        """分类进度更新"""
+        self.classification_page.set_progress(progress, True)
+
+    def _on_classification_completed(self, results: list):
+        """分类完成"""
+        self.classification_page.set_progress(100, False)
+        self.classification_page.set_results(results)
+
+        # 生成统计摘要
+        if results:
+            class_counts = {}
+            total_confidence = 0
+            uncertain_count = 0
+
+            for item in results:
+                result = item.get('result', {})
+                pred_class = result.get('predicted_class', 'unknown')
+                confidence = result.get('confidence', 0)
+                uncertain = result.get('uncertain', False)
+
+                class_counts[pred_class] = class_counts.get(pred_class, 0) + 1
+                total_confidence += confidence
+                if uncertain:
+                    uncertain_count += 1
+
+            avg_confidence = total_confidence / len(results) if results else 0
+
+            # 显示统计信息
+            summary = f"分类完成: {len(results)} 张图片\n"
+            summary += f"平均置信度: {avg_confidence:.1%}\n"
+            summary += f"低置信度项: {uncertain_count} 张\n"
+            summary += "各类别数量:\n"
+            for cls, count in sorted(class_counts.items()):
+                summary += f"  - {cls}: {count} 张\n"
+
+            self.classification_page.show_summary(summary)
+
+        # 清理线程
+        if self.classification_thread:
+            self.classification_thread.quit()
+            self.classification_thread.wait()
 
     def _clear_classification_results(self):
         """清空分类结果"""
@@ -407,8 +581,14 @@ class MainWindow(QMainWindow):
 
     def _load_settings(self):
         """加载设置"""
+        # 加载主题
         theme = self.settings.value("appearance/theme", "dark", type=str)
         theme_manager.set_theme(theme)
+
+        # 从 SettingsManager 加载设置并应用到设置页面
+        self.settings_manager.load()
+        gui_settings = self.settings_manager.to_gui_settings()
+        self.settings_page.set_settings(gui_settings)
 
     def _save_settings(self):
         """保存设置"""

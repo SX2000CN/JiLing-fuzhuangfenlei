@@ -21,19 +21,22 @@ if _src_path not in sys.path:
 # 后端模块延迟导入
 torch = None
 ClothingTrainer = None
+EarlyStopping = None
 BACKEND_AVAILABLE = False
 
 
 def _init_backend():
     """初始化后端模块"""
-    global torch, ClothingTrainer, BACKEND_AVAILABLE
+    global torch, ClothingTrainer, EarlyStopping, BACKEND_AVAILABLE
     if BACKEND_AVAILABLE:
         return True
     try:
         import torch as _torch
         from core.pytorch_trainer import ClothingTrainer as _ClothingTrainer
+        from core.pytorch_trainer import EarlyStopping as _EarlyStopping
         torch = _torch
         ClothingTrainer = _ClothingTrainer
+        EarlyStopping = _EarlyStopping
         BACKEND_AVAILABLE = True
         return True
     except ImportError:
@@ -120,10 +123,16 @@ class TrainingWorker(QObject):
             train_loader, val_loader = self.trainer.create_data_loaders(
                 data_dir=self.training_params['data_path'],
                 batch_size=self.training_params['batch_size'],
-                val_split=self.training_params['val_split']
+                val_split=self.training_params['val_split'],
+                num_workers=self.training_params.get('num_workers', 0)
             )
 
             self.progress_updated.emit(0, "开始训练...", {})
+
+            # 初始化早停
+            patience = self.training_params.get('patience', 10)
+            early_stopping = EarlyStopping(patience=patience) if patience > 0 else None
+            early_stopped = False
 
             # 训练循环
             for epoch in range(num_epochs):
@@ -164,6 +173,12 @@ class TrainingWorker(QObject):
                 if self.trainer.scheduler:
                     self.trainer.scheduler.step()
 
+                # 检查早停
+                if early_stopping and early_stopping(val_loss):
+                    self.progress_updated.emit(progress, f"早停触发 (patience={patience})", {})
+                    early_stopped = True
+                    break
+
             if not self.should_stop and not self.trainer.stop_flag:
                 self.progress_updated.emit(99, "保存模型...", {})
                 os.makedirs("models", exist_ok=True)
@@ -173,10 +188,22 @@ class TrainingWorker(QObject):
                 final_acc = final_metrics[-1] if final_metrics else 0
                 self.trainer.save_model(model_save_path, num_epochs, final_acc)
 
+                # 保存训练历史图表
+                history_path = model_save_path.replace('.pth', '_history.png')
+                try:
+                    self.trainer.plot_history(save_path=history_path)
+                    self.progress_updated.emit(99, f"训练图表已保存: {history_path}", {})
+                except Exception as e:
+                    self.progress_updated.emit(99, f"图表保存失败: {e}", {})
+
                 self._cleanup_gpu_memory(self.trainer)
 
-                self.progress_updated.emit(100, "训练完成！", {})
-                self.training_completed.emit(True, f"模型已保存到 {model_save_path}")
+                if early_stopped:
+                    self.progress_updated.emit(100, "训练完成（早停）！", {})
+                    self.training_completed.emit(True, f"早停触发，模型已保存到 {model_save_path}")
+                else:
+                    self.progress_updated.emit(100, "训练完成！", {})
+                    self.training_completed.emit(True, f"模型已保存到 {model_save_path}")
             else:
                 self._cleanup_gpu_memory(self.trainer)
                 self.training_completed.emit(False, "训练被用户停止")

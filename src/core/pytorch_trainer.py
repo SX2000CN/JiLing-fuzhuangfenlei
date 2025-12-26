@@ -83,38 +83,73 @@ class ClothingDataset(Dataset):
         # 应用变换
         if self.transform:
             image = self.transform(image)
-        
+
         return image, class_idx
+
+
+class EarlyStopping:
+    """早停机制 - 当验证损失不再下降时停止训练"""
+
+    def __init__(self, patience: int = 10, min_delta: float = 0.001):
+        """
+        Args:
+            patience: 容忍轮数，验证损失连续多少轮未改善则停止
+            min_delta: 最小改善量，小于此值视为未改善
+        """
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_loss = None
+
+    def __call__(self, val_loss: float) -> bool:
+        """检查是否应该停止训练"""
+        if self.best_loss is None:
+            self.best_loss = val_loss
+            return False
+
+        if val_loss < self.best_loss - self.min_delta:
+            self.best_loss = val_loss
+            self.counter = 0
+            return False
+
+        self.counter += 1
+        return self.counter >= self.patience
 
 
 class ClothingTrainer:
     """服装分类模型训练器"""
-    
-    def __init__(self, 
+
+    def __init__(self,
                  model_name: str = 'efficientnetv2_s',
                  num_classes: int = 3,
                  device: str = 'auto',
-                 input_size: int = 580):  # 与分类器保持一致的580x580甜蜜点
+                 input_size: int = 580,
+                 amp_enabled: bool = False):
         """
         初始化训练器
-        
+
         Args:
             model_name: 模型名称
             num_classes: 分类数量
             device: 计算设备
             input_size: 输入图像尺寸 (与分类器一致使用580)
+            amp_enabled: 是否启用混合精度训练
         """
         self.model_name = model_name
         self.num_classes = num_classes
         self.device = self._setup_device(device)
         self.input_size = input_size
-        
+
+        # 混合精度训练
+        self.amp_enabled = amp_enabled and torch.cuda.is_available()
+        self.scaler = torch.cuda.amp.GradScaler() if self.amp_enabled else None
+
         # 训练状态
         self.model = None
         self.optimizer = None
         self.scheduler = None
         self.criterion = None
-        
+
         # 训练历史
         self.history = {
             'train_loss': [],
@@ -130,13 +165,14 @@ class ClothingTrainer:
         # 停止标志和进度回调
         self.stop_flag = False
         self.progress_callback = None  # 签名: (batch_idx, total_batches, loss, acc) -> None
-        
+
         logger.info(f"训练器初始化完成:")
         logger.info(f"  模型: {model_name}")
         logger.info(f"  设备: {self.device}")
         logger.info(f"  类别数: {num_classes}")
         logger.info(f"  输入尺寸: {self.input_size}x{self.input_size} (与分类器一致的甜蜜点)")
-        
+        logger.info(f"  混合精度: {'启用' if self.amp_enabled else '禁用'}")
+
         # 清理GPU内存
         self._cleanup_gpu_memory()
     
@@ -391,14 +427,21 @@ class ClothingTrainer:
 
                 images, labels = images.to(self.device), labels.to(self.device)
 
-                # 前向传播
                 self.optimizer.zero_grad()
-                outputs = self.model(images)
-                loss = self.criterion(outputs, labels)
 
-                # 反向传播
-                loss.backward()
-                self.optimizer.step()
+                # 混合精度训练
+                if self.amp_enabled:
+                    with torch.cuda.amp.autocast():
+                        outputs = self.model(images)
+                        loss = self.criterion(outputs, labels)
+                    self.scaler.scale(loss).backward()
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    outputs = self.model(images)
+                    loss = self.criterion(outputs, labels)
+                    loss.backward()
+                    self.optimizer.step()
 
                 # 统计
                 running_loss += loss.item()

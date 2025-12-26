@@ -351,6 +351,45 @@ class ClassificationPage(QWidget):
         self.set_stats(0)
         self.set_progress(0, False)
 
+    def set_results(self, results: list):
+        """设置分类结果到表格"""
+        self.result_table.setRowCount(0)
+        for item in results:
+            result = item.get('result', {})
+            path = item.get('path', '')
+            pred_class = result.get('predicted_class', '')
+            confidence = result.get('confidence', 0)
+            uncertain = result.get('uncertain', False)
+
+            row = self.result_table.rowCount()
+            self.result_table.insertRow(row)
+
+            from PySide6.QtWidgets import QTableWidgetItem
+            from PySide6.QtGui import QColor
+
+            # 文件名
+            filename = path.split('\\')[-1].split('/')[-1]
+            self.result_table.setItem(row, 0, QTableWidgetItem(filename))
+
+            # 分类结果
+            class_item = QTableWidgetItem(pred_class)
+            if uncertain:
+                class_item.setForeground(QColor("#FF6B6B"))  # 红色标记不确定项
+            self.result_table.setItem(row, 1, class_item)
+
+            # 置信度
+            conf_item = QTableWidgetItem(f"{confidence:.1%}")
+            if uncertain:
+                conf_item.setForeground(QColor("#FF6B6B"))
+            self.result_table.setItem(row, 2, conf_item)
+
+        self.set_stats(len(results))
+
+    def show_summary(self, summary: str):
+        """显示分类统计摘要"""
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "分类统计", summary)
+
     def update_maximize_state(self, is_maximized: bool):
         """更新最大化状态时的样式"""
         # 内部圆角 = 窗口圆角(10) - 边框宽度(1) = 9
