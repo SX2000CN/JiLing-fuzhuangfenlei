@@ -58,7 +58,7 @@ except ImportError:
     GPU_UTIL_AVAILABLE = False
 
 # MiSans 字体路径
-FONT_DIR = PROJECT_ROOT / "MiSans" / "MiSans 开发下载字重"
+FONT_DIR = PROJECT_ROOT / "fonts"
 
 
 # =============================================================================
@@ -527,30 +527,36 @@ class FontManager:
     def get_font(cls, size: int, weight: int = QFont.Normal) -> QFont:
         """
         获取指定大小和字重的 MiSans 字体
-        
+
         Args:
             size: 字体大小 (px)
             weight: 字重 - QFont.Normal(400), QFont.Medium(500), QFont.DemiBold(600)
-        
+
         Returns:
             QFont 对象
         """
         font = QFont(cls.FAMILY)
         font.setPixelSize(size)
         font.setWeight(weight)
-        
-        # 优化字体渲染
-        font.setStyleStrategy(QFont.PreferAntialias)
-        font.setHintingPreference(QFont.PreferFullHinting)
-        
+
+        # 优化高DPI字体渲染
+        # PreferAntialias: 启用抗锯齿
+        # PreferNoHinting: 在高DPI显示器上禁用字体提示以避免锯齿
+        #   (高分辨率下像素密度足够高，不需要hinting来优化可读性)
+        font.setStyleStrategy(QFont.PreferAntialias | QFont.PreferQuality)
+        font.setHintingPreference(QFont.PreferNoHinting)
+
         return font
-    
+
     @classmethod
     def title_font(cls) -> QFont:
-        """页面标题字体 - VS Code Section Header Style (11px Bold Uppercase)"""
-        # 使用 DemiBold (600) 对应 MiSans-Semibold，避免使用未加载的 Bold (700)
-        font = cls.get_font(11, QFont.DemiBold)
+        """页面标题字体 - VS Code Section Header Style (12px Bold Uppercase)"""
+        # 使用 DemiBold (600) 对应 MiSans-Semibold
+        # 12px 比 11px 在高DPI下渲染更清晰
+        font = cls.get_font(12, QFont.DemiBold)
         font.setCapitalization(QFont.AllUppercase)
+        # 增加字母间距改善小号大写字体的可读性
+        font.setLetterSpacing(QFont.PercentageSpacing, 105)
         return font
     
     @classmethod
@@ -959,13 +965,14 @@ class StyleSheet:
             border-bottom-right-radius: 10px;
         }}
     """
-    
+
     SETTINGS_SECTION_TITLE = f"""
         QLabel {{
             color: {VS_FOCUS_BORDER};
-            font-size: 11px;
-            font-weight: bold;
+            font-size: 12px;
+            font-weight: 600;
             text-transform: uppercase;
+            letter-spacing: 0.5px;
             padding: 16px 0px 8px 0px;
             margin: 0;
         }}
@@ -1125,10 +1132,9 @@ class StyleSheet:
 class IconSvg:
     """SVG 图标定义 - 来自 Figma 设计稿"""
     
-    # 关闭按钮 14x14
-    CLOSE = '''<svg xmlns="http://www.w3.org/2000/svg" width="15" height="14" viewBox="0 0 15 14" fill="none">
-      <path d="M12.2931 0.293125C12.6829 -0.0977872 13.3172 -0.0976305 13.7072 0.293125C14.0983 0.683138 14.0982 1.31718 13.7072 1.70719L1.70715 13.7072C1.3172 14.0982 0.683039 14.0982 0.293091 13.7072C-0.0976938 13.3172 -0.0978275 12.6831 0.293091 12.2931L12.2931 0.293125Z" fill="{color}"/>
-      <path d="M0.477295 0.293125C0.867168 -0.0977849 1.50139 -0.0976235 1.89136 0.293125L13.8914 12.2931C14.2825 12.6832 14.2825 13.3172 13.8914 13.7072C13.5015 14.0982 12.8672 14.0982 12.4773 13.7072L0.477295 1.70719C0.0865257 1.31717 0.0863646 0.683052 0.477295 0.293125Z" fill="{color}"/>
+    # 关闭按钮 16x16 - 使用stroke实现一致的线条粗细
+    CLOSE = '''<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <path d="M3 3L13 13M13 3L3 13" stroke="{color}" stroke-width="1.5" stroke-linecap="round"/>
     </svg>'''
     
     # 训练图标 29x32 - 侧边栏
@@ -1146,14 +1152,14 @@ class IconSvg:
       <path d="M22.5003 3.33337C22.8466 3.33601 23.1835 3.44677 23.4642 3.64978C23.745 3.85291 23.9559 4.13882 24.0667 4.46716L25.1165 7.61658L28.0833 6.13318C28.3957 5.97906 28.7486 5.92706 29.0921 5.98376C29.4359 6.04056 29.754 6.20311 30.0003 6.44958L33.5501 10.0004C33.793 10.2453 33.9542 10.5596 34.011 10.8998C34.0677 11.24 34.0168 11.5894 33.8665 11.8998L32.3831 14.8666L35.5335 15.9164C35.8645 16.0282 36.1523 16.2417 36.3558 16.5258C36.559 16.8098 36.6672 17.1511 36.6663 17.5004V22.5004C36.6638 22.8466 36.5536 23.1836 36.3509 23.4642C36.1478 23.745 35.8618 23.9559 35.5335 24.0668L32.3831 25.1166L33.8665 28.0834C34.0206 28.3957 34.0736 28.7486 34.0169 29.0922C33.9601 29.436 33.7966 29.754 33.5501 30.0004L30.0003 33.5502C29.7566 33.7897 29.4446 33.9486 29.1077 34.0052C28.771 34.0618 28.4249 34.013 28.1165 33.8666L25.1497 32.3832L24.0999 35.5336C23.9881 35.8645 23.7747 36.1524 23.4905 36.3558C23.2067 36.5589 22.8659 36.6672 22.5169 36.6664H17.5169C17.1676 36.6672 16.8264 36.5591 16.5423 36.3558C16.2582 36.1523 16.0447 35.8645 15.9329 35.5336L14.8831 32.3832L11.9163 33.8666C11.6039 34.0206 11.2512 34.0737 10.9075 34.017C10.5638 33.9601 10.2466 33.7965 10.0003 33.5502L6.44952 30.0004C6.20661 29.7554 6.04627 29.4403 5.98956 29.1C5.93294 28.7598 5.98281 28.4104 6.13312 28.1L7.61652 25.1332L4.4671 24.0834C4.13607 23.9715 3.84821 23.7582 3.64484 23.474C3.44162 23.1901 3.33248 22.8495 3.33331 22.5004V17.5004C3.33589 17.1538 3.44659 16.8163 3.64972 16.5355C3.85284 16.2548 4.13879 16.0439 4.4671 15.933L7.61652 14.8832L6.13312 11.9164C5.97906 11.604 5.92695 11.2512 5.9837 10.9076C6.04047 10.564 6.20323 10.2466 6.44952 10.0004L10.0003 6.44958C10.2452 6.20685 10.5596 6.04631 10.8997 5.98962C11.2399 5.93294 11.5893 5.98293 11.8997 6.13318L14.8665 7.61658L15.9163 4.46716C16.0281 4.13613 16.2416 3.84827 16.5257 3.6449C16.8098 3.44153 17.1509 3.33247 17.5003 3.33337H22.5003ZM18.0335 8.66638C17.8843 9.1263 17.6365 9.54897 17.3079 9.90369C16.9795 10.2582 16.578 10.5372 16.1312 10.7211C15.6841 10.905 15.202 10.989 14.7191 10.9681C14.236 10.9473 13.7629 10.8218 13.3333 10.6L11.4837 9.64978L9.64972 11.4838L10.5999 13.3334C10.8217 13.763 10.9472 14.2361 10.9681 14.7191C10.9889 15.202 10.9049 15.6842 10.721 16.1312C10.5371 16.5781 10.2581 16.9796 9.90363 17.308C9.54891 17.6365 9.12624 17.8844 8.66632 18.0336L6.66632 18.6996V21.3002L8.66632 21.9672C9.12624 22.1163 9.54891 22.3633 9.90363 22.6918C10.2583 23.0202 10.5371 23.4224 10.721 23.8695C10.9049 24.3166 10.989 24.7987 10.9681 25.2816C10.9472 25.7644 10.8216 26.2369 10.5999 26.6664L9.59991 28.517L11.4329 30.35L13.3333 29.3998C13.7629 29.178 14.236 29.0524 14.7191 29.0316C15.202 29.0107 15.6841 29.0957 16.1312 29.2797C16.5781 29.4635 16.9795 29.7424 17.3079 30.097C17.6365 30.4517 17.8843 30.8735 18.0335 31.3334L18.6995 33.3334H21.3499L22.0169 31.3334C22.1674 30.8802 22.4136 30.4644 22.7386 30.1146C23.0635 29.7649 23.46 29.4893 23.9007 29.306C24.3417 29.1227 24.8171 29.0358 25.2943 29.0521C25.7713 29.0685 26.2392 29.187 26.6663 29.3998L28.5169 30.3998L30.3499 28.5668L29.3997 26.6664C29.178 26.2369 29.0524 25.7644 29.0316 25.2816C29.0106 24.7986 29.0956 24.3167 29.2796 23.8695C29.4634 23.4224 29.7422 23.0203 30.097 22.6918C30.4516 22.3634 30.8736 22.1163 31.3333 21.9672L33.3333 21.3002V18.6498L31.3333 17.9838C30.8802 17.8333 30.4644 17.5871 30.1146 17.2621C29.7649 16.9372 29.4893 16.5407 29.306 16.1C29.1227 15.6591 29.0358 15.1836 29.0521 14.7064C29.0684 14.2292 29.1868 13.7608 29.3997 13.3334L30.3997 11.4838L28.5667 9.64978L26.6663 10.6C26.2368 10.8217 25.7644 10.9472 25.2816 10.9681C24.7986 10.989 24.3166 10.905 23.8694 10.7211C23.4223 10.5372 23.0202 10.2583 22.6917 9.90369C22.3632 9.54897 22.1163 9.1263 21.9671 8.66638L21.3001 6.66638H18.6995L18.0335 8.66638ZM20.0003 13.3334C21.7683 13.3335 23.4641 14.0354 24.7142 15.2855C25.9645 16.5358 26.6663 18.2323 26.6663 20.0004C26.6663 21.3186 26.2756 22.6073 25.5433 23.7035C24.8108 24.7998 23.7693 25.655 22.5511 26.1595C21.333 26.6641 19.9926 26.7957 18.6995 26.5385C17.4063 26.2813 16.2178 25.6466 15.2855 24.7142C14.3533 23.782 13.7185 22.5941 13.4612 21.3011C13.204 20.0078 13.3365 18.6668 13.8411 17.4486C14.3457 16.2306 15.2001 15.1899 16.2962 14.4574C17.3925 13.7248 18.6818 13.3334 20.0003 13.3334ZM21.2757 16.9203C20.6666 16.668 19.9964 16.6023 19.3499 16.7308C18.7033 16.8595 18.1091 17.1768 17.6429 17.6429C17.1767 18.1091 16.8594 18.7034 16.7308 19.35C16.6022 19.9965 16.668 20.6667 16.9202 21.2758C17.1725 21.8847 17.5996 22.4057 18.1478 22.7719C18.6959 23.1382 19.341 23.3334 20.0003 23.3334C20.8842 23.3333 21.7317 22.9819 22.3568 22.3568C22.9818 21.7317 23.3332 20.8842 23.3333 20.0004C23.3333 19.3411 23.1381 18.696 22.7718 18.1478C22.4056 17.5997 21.8847 17.1726 21.2757 16.9203Z" fill="{color}"/>
     </svg>'''
     
-    # 最大化按钮 16x16
+    # 最大化按钮 16x16 - 使用stroke实现一致的线条粗细
     MAXIMIZE = '''<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none">
-      <path d="M12 0C13.0608 0 14.0797 0.425977 14.8301 1.16992C15.5797 1.92187 16 2.93594 16 4V12C16 13.0641 15.5797 14.0782 14.8301 14.8301C14.0797 15.5741 13.0608 16 12 16H4C2.93921 16 1.92031 15.5741 1.16992 14.8301C0.420312 14.0782 0 13.0641 0 12V4C0 2.93594 0.420312 1.92187 1.16992 1.16992C1.92031 0.425977 2.93921 0 4 0H12ZM4 1.59961C3.36318 1.59961 2.74936 1.85196 2.2998 2.2998C1.84936 2.74785 1.59961 3.35996 1.59961 4V12C1.59961 12.64 1.84937 13.2522 2.2998 13.7002C2.74936 14.148 3.36318 14.4004 4 14.4004H12C12.6368 14.4004 13.2506 14.148 13.7002 13.7002C14.1506 13.2522 14.4004 12.64 14.4004 12V4C14.4004 3.35996 14.1506 2.74785 13.7002 2.2998C13.2506 1.85196 12.6368 1.59961 12 1.59961H4Z" fill="{color}"/>
+      <rect x="2" y="2" width="12" height="12" rx="1.5" stroke="{color}" stroke-width="1.5" fill="none"/>
     </svg>'''
-    
-    # 最小化按钮 16x2
-    MINIMIZE = '''<svg xmlns="http://www.w3.org/2000/svg" width="16" height="2" viewBox="0 0 16 2" fill="none">
-      <path d="M15 0C15.552 0 16 0.447998 16 1C16 1.552 15.552 2 15 2H1C0.447998 2 0 1.552 0 1C0 0.447998 0.447998 0 1 0H15Z" fill="{color}"/>
+
+    # 最小化按钮 16x16 - 使用stroke实现一致的线条粗细
+    MINIMIZE = '''<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <path d="M3 8H13" stroke="{color}" stroke-width="1.5" stroke-linecap="round"/>
     </svg>'''
 
     # 下拉箭头 16x16
@@ -1198,22 +1204,30 @@ class SidebarButton(QPushButton):
         elif icon_text:
             # 使用 emoji 文本
             self.setText(icon_text)
-    
+
     def _update_icon(self, color: str):
-        """更新 SVG 图标颜色"""
+        """更新 SVG 图标颜色 - 支持高DPI渲染"""
         if not self._svg_template:
             return
-        
+
         svg_data = self._svg_template.replace("{color}", color)
         renderer = QSvgRenderer(QByteArray(svg_data.encode()))
         w, h = self._icon_size
-        pixmap = QPixmap(w, h)
+
+        # 获取设备像素比以支持高DPI显示
+        dpr = QApplication.primaryScreen().devicePixelRatio() if QApplication.primaryScreen() else 1.0
+
+        # 创建高分辨率 pixmap
+        pixmap = QPixmap(int(w * dpr), int(h * dpr))
+        pixmap.setDevicePixelRatio(dpr)
         pixmap.fill(Qt.transparent)
+
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
         renderer.render(painter)
         painter.end()
-        
+
         self.setIcon(QIcon(pixmap))
         self.setIconSize(QSize(w, h))
     
@@ -1271,11 +1285,12 @@ class VSCheckBox(QWidget):
         if event.button() == Qt.LeftButton:
             self.toggle()
         super().mousePressEvent(event)
-    
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
-        
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
         # 背景和边框颜色
         if self._checked:
             bg_color = QColor("#1177BB") if self._hovered else QColor(StyleSheet.VS_FOCUS_BORDER)
@@ -1708,15 +1723,25 @@ class WindowControlBar(QWidget):
         self.btn_close.clicked.connect(self.close_clicked.emit)
         layout.addWidget(self.btn_close)
 
-    def _create_svg_icon(self, svg_template: str, color: str) -> QIcon:
-        """创建SVG图标"""
+    def _create_svg_icon(self, svg_template: str, color: str, size: int = 32) -> QIcon:
+        """创建SVG图标 - 支持高DPI渲染"""
         svg_content = svg_template.replace("{color}", color)
         renderer = QSvgRenderer(QByteArray(svg_content.encode()))
-        pixmap = QPixmap(32, 32)
+
+        # 获取设备像素比以支持高DPI显示
+        dpr = QApplication.primaryScreen().devicePixelRatio() if QApplication.primaryScreen() else 1.0
+
+        # 创建高分辨率 pixmap
+        pixmap = QPixmap(int(size * dpr), int(size * dpr))
+        pixmap.setDevicePixelRatio(dpr)
         pixmap.fill(Qt.transparent)
+
         painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
         renderer.render(painter)
         painter.end()
+
         return QIcon(pixmap)
 
 
@@ -1726,15 +1751,15 @@ class SettingsRow(QWidget):
     每行包含：标题、描述、输入控件
     鼠标悬停时整行高亮
     """
-    
+
     def __init__(self, title: str, description: str = "", parent=None):
         super().__init__(parent)
         self.setMinimumHeight(50)
         self.setCursor(Qt.PointingHandCursor)
-        
-        # 主布局
+
+        # 主布局 - 左右边距让高亮背景与文字有舒适间距
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setContentsMargins(12, 10, 12, 10)  # 内部边距，配合 scroll_layout 的外部边距
         layout.setSpacing(16)
         
         # 左侧文字区
@@ -1776,12 +1801,12 @@ class SettingsRow(QWidget):
     def get_control(self):
         """获取控件"""
         return self._control
-    
+
     def enterEvent(self, event):
         """鼠标进入时高亮"""
         self.setStyleSheet("background-color: rgba(90, 93, 94, 0.31); border-radius: 3px;")
         super().enterEvent(event)
-    
+
     def leaveEvent(self, event):
         """鼠标离开时恢复"""
         self.setStyleSheet("background-color: transparent;")
@@ -1793,15 +1818,15 @@ class SettingsCheckRow(QWidget):
     设置复选框行 - VS Code 风格
     复选框在最左侧，使用自定义 VSCheckBox
     """
-    
+
     def __init__(self, title: str, description: str = "", parent=None):
         super().__init__(parent)
         self.setMinimumHeight(40)
         self.setCursor(Qt.PointingHandCursor)
-        
-        # 主布局
+
+        # 主布局 - 左右边距让高亮背景与文字有舒适间距
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setContentsMargins(12, 10, 12, 10)  # 内部边距，配合 scroll_layout 的外部边距
         layout.setSpacing(10)
         
         # 复选框 - 使用自定义 VSCheckBox
@@ -2114,17 +2139,18 @@ class RoundedContainer(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
-        
+        painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+
         path = self._create_squircle_path(self.rect(), self.CORNER_RADIUS)
-        
+
         # 裁剪所有子控件到圆角区域内
         painter.setClipPath(path)
-        
+
         # 绘制背景
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor("#191919"))
         painter.drawPath(path)
-        
+
         super().paintEvent(event)
 
 
@@ -2269,18 +2295,29 @@ class MainWindow(QMainWindow):
         painter.drawPath(path)
         
         super().paintEvent(event)
-    
+
     # 不使用 setMask，避免锯齿
-    
+
     def _create_svg_icon(self, svg_template: str, color: str) -> QIcon:
-        """从 SVG 模板创建图标"""
+        """从 SVG 模板创建图标 - 支持高DPI渲染"""
         svg_data = svg_template.replace("{color}", color)
         renderer = QSvgRenderer(QByteArray(svg_data.encode()))
-        pixmap = QPixmap(renderer.defaultSize())
+
+        # 获取设备像素比以支持高DPI显示
+        dpr = QApplication.primaryScreen().devicePixelRatio() if QApplication.primaryScreen() else 1.0
+        default_size = renderer.defaultSize()
+
+        # 创建高分辨率 pixmap
+        pixmap = QPixmap(int(default_size.width() * dpr), int(default_size.height() * dpr))
+        pixmap.setDevicePixelRatio(dpr)
         pixmap.fill(Qt.transparent)
+
         painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
         renderer.render(painter)
         painter.end()
+
         return QIcon(pixmap)
     
     def _setup_ui(self):
@@ -2583,7 +2620,7 @@ class MainWindow(QMainWindow):
         btn_min = QPushButton()
         btn_min.setFixedSize(46, 32)
         btn_min.setIcon(self._create_svg_icon(IconSvg.MINIMIZE, "#D1D1D1"))
-        btn_min.setIconSize(QSize(12, 2))
+        btn_min.setIconSize(QSize(12, 12))
         btn_min.setStyleSheet(StyleSheet.CONTROL_BTN)
         btn_min.clicked.connect(self.showMinimized)
         btn_row_layout.addWidget(btn_min)
@@ -2852,7 +2889,7 @@ class MainWindow(QMainWindow):
         btn_min = QPushButton()
         btn_min.setFixedSize(46, 32)
         btn_min.setIcon(self._create_svg_icon(IconSvg.MINIMIZE, "#D1D1D1"))
-        btn_min.setIconSize(QSize(12, 2))
+        btn_min.setIconSize(QSize(12, 12))
         btn_min.setStyleSheet(StyleSheet.CONTROL_BTN)
         btn_min.clicked.connect(self.showMinimized)
         btn_row_layout.addWidget(btn_min)
@@ -2968,31 +3005,31 @@ class MainWindow(QMainWindow):
         
         # 窗口控制按钮
         control_bar = QWidget()
-        control_bar.setFixedHeight(35)
+        control_bar.setFixedHeight(32)
         control_layout = QHBoxLayout(control_bar)
         control_layout.setContentsMargins(0, 0, 0, 0)
         control_layout.addStretch()
-        
+
         btn_min = QPushButton()
-        btn_min.setFixedSize(46, 35)
+        btn_min.setFixedSize(46, 32)
         btn_min.setIcon(self._create_svg_icon(IconSvg.MINIMIZE, StyleSheet.VS_FOREGROUND))
-        btn_min.setIconSize(QSize(16, 16))
+        btn_min.setIconSize(QSize(12, 12))
         btn_min.setStyleSheet(StyleSheet.CONTROL_BTN)
         btn_min.clicked.connect(self.showMinimized)
         control_layout.addWidget(btn_min)
-        
+
         btn_max = QPushButton()
-        btn_max.setFixedSize(46, 35)
+        btn_max.setFixedSize(46, 32)
         btn_max.setIcon(self._create_svg_icon(IconSvg.MAXIMIZE, StyleSheet.VS_FOREGROUND))
-        btn_max.setIconSize(QSize(16, 16))
+        btn_max.setIconSize(QSize(12, 12))
         btn_max.setStyleSheet(StyleSheet.CONTROL_BTN)
         btn_max.clicked.connect(self._toggle_maximize)
         control_layout.addWidget(btn_max)
-        
+
         btn_close = QPushButton()
-        btn_close.setFixedSize(46, 35)
+        btn_close.setFixedSize(46, 32)
         btn_close.setIcon(self._create_svg_icon(IconSvg.CLOSE, StyleSheet.VS_FOREGROUND))
-        btn_close.setIconSize(QSize(14, 14))
+        btn_close.setIconSize(QSize(12, 12))
         btn_close.setStyleSheet(StyleSheet.CLOSE_BTN)
         btn_close.clicked.connect(self.close)
         control_layout.addWidget(btn_close)
@@ -3026,7 +3063,7 @@ class MainWindow(QMainWindow):
         
         scroll_content = QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setContentsMargins(24, 0, 24, 24)
+        scroll_layout.setContentsMargins(12, 0, 12, 24)  # 左右边距推动 SettingsRow 向内，使高亮背景不贴边
         scroll_layout.setSpacing(0)
         
         # ===== 外观设置 =====
@@ -3275,12 +3312,20 @@ class MainWindow(QMainWindow):
         
         return settings_area
     
-    def _create_section_title(self, title: str) -> QLabel:
+    def _create_section_title(self, title: str) -> QWidget:
         """创建设置分区标题"""
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(12, 16, 12, 8)  # 与 SettingsRow 文字对齐 (scroll 12px + 这里 12px = 24px)
+        layout.setSpacing(0)
+
         label = QLabel(title)
         label.setStyleSheet(StyleSheet.SETTINGS_SECTION_TITLE)
         label.setFont(FontManager.title_font())
-        return label
+        layout.addWidget(label)
+        layout.addStretch()
+
+        return container
     
     def _reset_settings(self):
         """恢复默认设置"""
@@ -3852,9 +3897,9 @@ def _ensure_icons():
 
 def main():
     """程序入口"""
-    # 适配高 DPI
+    # 适配高 DPI - 必须在 QApplication 创建前设置
     os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
-    os.environ["QT_SCALE_FACTOR"] = "1"
+    # 注意：不设置 QT_SCALE_FACTOR，让系统自动处理缩放
     if hasattr(Qt, 'AA_EnableHighDpiScaling'):
         QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     if hasattr(Qt, 'AA_UseHighDpiPixmaps'):

@@ -21,7 +21,21 @@
       "Bash(cmd.exe /c \"C:\\\\Users\\\\Administrator\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313\\\\python.exe d:\\\\桌面\\\\编程\\\\JiLing-fuzhuangfenlei\\\\run_new_gui.py 2>&1\")",
       "Bash(del:*)",
       "Bash(cmd.exe:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(mkdir:*)",
+      "Bash(openspec validate:*)",
+      "Bash(cd:*)",
+      "Bash(openspec list:*)",
+      "Skill(openspec:apply)",
+      "Skill(openspec:apply:*)",
+      "Skill(openspec:archive)",
+      "Skill(openspec:archive:*)",
+      "Bash(openspec archive add-window-border:*)",
+      "Bash(openspec archive:*)",
+      "Skill(openspec:proposal)",
+      "Skill(openspec:proposal:*)"
     ]
   }
 }
