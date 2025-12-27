@@ -6,6 +6,7 @@ from .inputs import ParamRow, ComboRow, FileRow, SliderRow
 from .settings import SettingsRow, SettingsCheckRow
 from .terminal import TerminalOutput
 from .window_controls import WindowControlBar
+from .progress import AnimatedProgressBar
 
 __all__ = [
     'SidebarButton',
@@ -20,4 +21,5 @@ __all__ = [
     'SettingsCheckRow',
     'TerminalOutput',
     'WindowControlBar',
+    'AnimatedProgressBar',
 ]

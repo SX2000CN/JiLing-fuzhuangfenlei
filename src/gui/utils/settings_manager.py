@@ -14,7 +14,8 @@ class SettingsManager:
     DEFAULT_SETTINGS = {
         "appearance": {
             "theme": "dark",
-            "scale": "100%"
+            "scale": "100%",
+            "animations_enabled": True
         },
         "model": {
             "device": "auto",

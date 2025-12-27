@@ -217,7 +217,79 @@ class MainWindow(QMainWindow):
         self._main_layout.addWidget(self.page_stack)
 
     def _toggle_maximize(self):
-        """切换最大化/还原"""
+        """切换最大化/还原（带缩放动画）"""
+        from .animations import animation_manager
+        from PySide6.QtCore import QPropertyAnimation, QRect
+        from PySide6.QtGui import QScreen
+
+        if not animation_manager.enabled:
+            self._do_toggle_maximize()
+            return
+
+        # 获取当前 geometry
+        current_geo = self.geometry()
+        is_maximized = self.isMaximized()
+
+        if is_maximized:
+            # 恢复：从最大化到之前保存的正常大小
+            target_geo = getattr(self, '_saved_normal_geometry', current_geo)
+            # 先退出最大化状态
+            self.setWindowState(self.windowState() & ~Qt.WindowMaximized)
+            # 准备恢复样式
+            self._prepare_restore_style()
+        else:
+            # 最大化：从当前大小到全屏
+            # 保存当前大小（用于恢复）
+            self._saved_normal_geometry = current_geo
+            # 获取屏幕可用区域
+            screen = self.screen() or QApplication.primaryScreen()
+            target_geo = screen.availableGeometry()
+            # 先执行最大化的样式变化
+            self._prepare_maximize_style()
+
+        # 创建 geometry 动画
+        self._geo_anim = QPropertyAnimation(self, b"geometry")
+        self._geo_anim.setDuration(animation_manager._get_duration(200))
+        self._geo_anim.setStartValue(current_geo)
+        self._geo_anim.setEndValue(target_geo)
+        self._geo_anim.setEasingCurve(animation_manager.create_ease_out_curve())
+
+        # 动画完成后的处理
+        def on_finished():
+            if is_maximized:
+                # 恢复完成
+                pass
+            else:
+                # 最大化完成，应用最大化状态
+                self._finalize_maximize()
+
+        self._geo_anim.finished.connect(on_finished)
+        self._geo_anim.start()
+
+    def _prepare_maximize_style(self):
+        """准备最大化样式（不调用 showMaximized）"""
+        central = self.centralWidget()
+        self.setAttribute(Qt.WA_TranslucentBackground, False)
+        self._main_layout.setContentsMargins(0, 0, 0, 0)
+        central.setStyleSheet("")
+        self._update_maximize_icons(True)
+
+    def _prepare_restore_style(self):
+        """准备恢复样式"""
+        central = self.centralWidget()
+        b = self.BORDER_WIDTH
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self._main_layout.setContentsMargins(b, b, b, b)
+        self._update_border_style()
+        self._update_maximize_icons(False)
+
+    def _finalize_maximize(self):
+        """完成最大化"""
+        # 标记为最大化状态（通过设置 window state）
+        self.setWindowState(self.windowState() | Qt.WindowMaximized)
+
+    def _do_toggle_maximize(self):
+        """实际执行最大化/还原"""
         central = self.centralWidget()
         b = self.BORDER_WIDTH
 
@@ -337,8 +409,43 @@ class MainWindow(QMainWindow):
         self.settings_page.close_requested.connect(self.close)
 
     def _switch_page(self, page_index: int):
-        """切换页面"""
+        """切换页面（带动画）"""
+        from .animations import animation_manager
+        from PySide6.QtCore import QPropertyAnimation, QParallelAnimationGroup
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+
+        current_index = self.page_stack.currentIndex()
+        if current_index == page_index:
+            return
+
+        if not animation_manager.enabled:
+            self.page_stack.setCurrentIndex(page_index)
+            return
+
+        # 获取当前和目标页面
+        current_page = self.page_stack.widget(current_index)
+        target_page = self.page_stack.widget(page_index)
+
+        # 确保目标页面有透明度效果
+        target_effect = target_page.graphicsEffect()
+        if not isinstance(target_effect, QGraphicsOpacityEffect):
+            target_effect = QGraphicsOpacityEffect(target_page)
+            target_page.setGraphicsEffect(target_effect)
+        target_effect.setOpacity(0)
+
+        # 切换到目标页面
         self.page_stack.setCurrentIndex(page_index)
+
+        # 淡入动画
+        fade_in = QPropertyAnimation(target_effect, b"opacity")
+        fade_in.setDuration(animation_manager._get_duration(animation_manager.DURATION_NORMAL))
+        fade_in.setStartValue(0.0)
+        fade_in.setEndValue(1.0)
+        fade_in.setEasingCurve(animation_manager.create_ease_out_curve())
+        fade_in.start()
+
+        # 保存动画引用防止被回收
+        self._page_anim = fade_in
 
     def _on_theme_setting_changed(self, theme: str):
         """处理主题设置变化"""
@@ -581,6 +688,8 @@ class MainWindow(QMainWindow):
 
     def _load_settings(self):
         """加载设置"""
+        from .animations import animation_manager
+
         # 加载主题
         theme = self.settings.value("appearance/theme", "dark", type=str)
         theme_manager.set_theme(theme)
@@ -589,6 +698,10 @@ class MainWindow(QMainWindow):
         self.settings_manager.load()
         gui_settings = self.settings_manager.to_gui_settings()
         self.settings_page.set_settings(gui_settings)
+
+        # 应用动画设置
+        animations_enabled = self.settings_manager.get("appearance.animations_enabled", True)
+        animation_manager.enabled = animations_enabled
 
     def _save_settings(self):
         """保存设置"""
