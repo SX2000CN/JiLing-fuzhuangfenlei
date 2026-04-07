@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
-title JiLing - New UI
+title JiLing - 新界面(稳定)
 cd /d "%~dp0.."
-".conda\python.exe" "src\gui\native_ui.py"
+".conda\python.exe" "run_new_gui.py"
 pause
 

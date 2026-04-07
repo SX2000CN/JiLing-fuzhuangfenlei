@@ -1,129 +1,78 @@
-# 服装分类系统
+# JiLing 服装分类系统
 
-基于 PyTorch 的智能服装图片自动分类系统，能够将服装拍摄照片自动分类为三个类别。
+更新时间：2026-04-07
 
-## 分类类别
+基于 PyTorch 的服装图片三分类项目（主图/细节/吊牌），提供 CLI 与多套 GUI 实现。
 
-- **主图** - 完整服装展示（正面挂拍，背景干净）
-- **细节** - 局部特写（面料、工艺、设计细节）
-- **吊牌** - 商品标签（价格、成分、货号信息）
+## 1. 入口统一状态
 
-## 技术栈
+1. 默认新界面主入口已经统一为稳定版：`run_new_gui.py` -> `src/gui/native_ui.py`。
+2. 模块化预览入口：`run_new_gui.py --modular` -> `src/gui/app.py`。
+3. 传统界面入口：`run_new_gui.py --traditional` -> `src/gui/main_window.py`。
+4. `launchers/` 中 GUI 脚本已统一通过 `run_new_gui.py` 路由，避免同名入口指向不同实现。
 
-- **深度学习**: PyTorch 2.0+ / timm (EfficientNetV2-S)
-- **图形界面**: PySide6
-- **图像处理**: Pillow / OpenCV
+## 2. 快速启动
 
-## 快速开始
+```bash
+# 稳定新界面（默认）
+python run_new_gui.py
 
-### 环境要求
+# 模块化预览（待完整回归）
+python run_new_gui.py --modular
 
-- Python 3.11+
-- 8GB+ RAM
-- GPU (可选，支持 CUDA 加速)
+# 传统界面
+python run_new_gui.py --traditional
 
-### 安装依赖
+# CLI
+python src/cli/classify_cli.py --help
+```
+
+Windows 可直接使用：
+
+1. `launchers/启动-新界面.bat`
+2. `launchers/启动-新界面-模块化预览.bat`
+3. `launchers/快速启动-传统界面.bat`
+4. `launchers/run_classify.bat`
+
+## 3. 项目结构（实际）
+
+```text
+JiLing-fuzhuangfenlei/
+├─ src/
+│  ├─ core/
+│  ├─ cli/
+│  ├─ gui/
+│  └─ utils/
+├─ launchers/
+├─ config/
+├─ models/
+├─ data/
+├─ fonts/
+├─ logs/
+├─ outputs/
+├─ tests/
+├─ docs/
+├─ build/
+└─ openspec/
+```
+
+## 4. 开发与测试
 
 ```bash
 pip install -r requirements.txt
+python -m pytest tests -q
 ```
 
-### 启动方式
+## 5. 文档入口
 
-**方式一：命令行工具（推荐，生产环境）**
-```bash
-python launchers/classify_cli.py
-# 或双击 launchers/run_classify.bat
-```
+1. `docs/结构规范化报告.md`
+2. `docs/开发者指南.md`
+3. `docs/新版UI使用说明.md`
+4. `docs/项目完整文档.md`
+5. `docs/项目文件结构规划.md`
+6. `docs/保留冻结清理清单.md`
+7. `docs/文档状态总览.md`
 
-**方式二：传统图形界面**
-```bash
-python launchers/launch.py
-# 或双击 launchers/快速启动-传统界面.bat
-```
+## 6. 当前阶段结论
 
-**方式三：新版图形界面（VS Code 风格）**
-```bash
-python src/gui/native_ui.py
-# 或双击 launchers/启动-新界面.bat
-```
-
-## 项目结构
-
-```
-服装分类系统/
-├── src/                    # 源代码
-│   ├── core/              # 核心算法
-│   │   ├── pytorch_classifier.py   # 分类器
-│   │   ├── pytorch_trainer.py      # 训练器
-│   │   └── model_factory.py        # 模型工厂
-│   ├── gui/               # 图形界面
-│   │   ├── main_window.py          # 传统界面
-│   │   ├── native_ui.py            # 新版界面
-│   │   ├── components/             # UI组件库
-│   │   ├── pages/                  # 页面模块
-│   │   └── styles/                 # 设计系统
-│   ├── cli/               # 命令行工具
-│   │   └── classify_cli.py         # 批量分类
-│   └── utils/             # 工具函数
-├── config/                # 配置文件
-│   ├── model_config.yaml          # 模型配置
-│   ├── training_config.yaml       # 训练配置
-│   └── paths_config.yaml          # 路径配置
-├── models/                # 模型文件
-├── data/                  # 数据集
-│   ├── train/            # 训练数据
-│   ├── val/              # 验证数据
-│   └── test/             # 测试数据
-├── launchers/             # 启动脚本
-├── docs/                  # 详细文档
-├── UI设计规范/            # UI设计规范文档
-├── fonts/                 # 字体资源 (MiSans)
-├── logs/                  # 运行日志
-└── outputs/               # 输出结果
-```
-
-## 功能模块
-
-### 命令行分类工具 (主要工作程序)
-- 批量图片分类
-- 多线程并行处理（20线程）
-- 自动文件组织
-- 实时进度显示
-
-### 传统图形界面
-- 完整的训练和分类功能
-- 参数配置面板
-- 实时日志输出
-
-### 新版图形界面 (开发中)
-- VS Code 风格设计
-- 无边框窗口
-- 现代化组件库
-
-## 配置说明
-
-主要配置文件位于 `config/` 目录：
-
-| 文件 | 说明 |
-|------|------|
-| `model_config.yaml` | 模型类型、类别数、图像尺寸 |
-| `training_config.yaml` | 训练参数、优化器、数据增强 |
-| `paths_config.yaml` | 数据路径、输出路径 |
-
-## 性能指标
-
-- **推理速度**: 27+ 张/秒 (RTX 3060)
-- **准确率**: 95%+ (EfficientNetV2-S)
-- **批量处理**: 20,000 张图片约 2-3 分钟
-
-## 文档
-
-- [UI设计规范](UI设计规范/README.md) - 界面设计规范文档
-- [开发者指南](docs/开发者指南.md) - 代码结构与API说明
-- [部署说明](docs/部署包说明.md) - 部署与打包指南
-- [项目完整文档](docs/项目完整文档.md) - 详细功能说明
-
-## 许可证
-
-MIT License
+项目已完成入口统一落地，当前进入“模块化新界面全流程回归 + legacy 收敛”的阶段。

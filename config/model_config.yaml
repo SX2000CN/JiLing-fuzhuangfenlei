@@ -1,12 +1,13 @@
 # 模型配置文件
 model:
-  # 支持的模型类型: efficientnetv2_s, convnext_tiny
-  name: "efficientnetv2_s"
+  # 支持的模型类型: tf_efficientnetv2_s, convnext_tiny, resnet50, vit_base_patch16_224, swin_tiny_patch4_window7_224
+  # 兼容别名: efficientnetv2_s -> tf_efficientnetv2_s
+  name: "tf_efficientnetv2_s"
   num_classes: 3
   pretrained: true
   
   # 图像尺寸
-  image_size: 512
+  image_size: 580
   
   # 类别标签
   classes:

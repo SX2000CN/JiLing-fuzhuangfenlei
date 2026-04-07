@@ -13,6 +13,11 @@ logger = logging.getLogger(__name__)
 
 class ModelFactory:
     """模型工厂类"""
+
+    # 模型别名（兼容历史配置）
+    MODEL_ALIASES = {
+        'efficientnetv2_s': 'tf_efficientnetv2_s',
+    }
     
     # 支持的模型配置
     SUPPORTED_MODELS = {
@@ -68,8 +73,11 @@ class ModelFactory:
         Returns:
             PyTorch模型
         """
+        model_name = cls.normalize_model_name(model_name)
+
         if model_name not in cls.SUPPORTED_MODELS:
-            raise ValueError(f"不支持的模型: {model_name}")
+            supported = ", ".join(cls.get_supported_models())
+            raise ValueError(f"不支持的模型: {model_name}，支持的模型: {supported}")
         
         # 获取timm模型名称
         timm_name = cls.SUPPORTED_MODELS[model_name]['timm_name']
@@ -98,6 +106,19 @@ class ModelFactory:
             模型名称列表
         """
         return list(cls.SUPPORTED_MODELS.keys())
+
+    @classmethod
+    def normalize_model_name(cls, model_name: str) -> str:
+        """
+        归一化模型名称（处理历史别名）
+
+        Args:
+            model_name: 模型名称或别名
+
+        Returns:
+            规范化后的模型名称
+        """
+        return cls.MODEL_ALIASES.get(model_name, model_name)
     
     @classmethod
     def get_all_models(cls) -> Dict[str, Dict[str, Any]]:
@@ -120,4 +141,5 @@ class ModelFactory:
         Returns:
             模型信息字典，如果模型不存在返回None
         """
+        model_name = cls.normalize_model_name(model_name)
         return cls.SUPPORTED_MODELS.get(model_name)

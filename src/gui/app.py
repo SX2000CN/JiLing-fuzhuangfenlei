@@ -8,6 +8,7 @@
 """
 
 import sys
+import logging
 import ctypes
 import ctypes.wintypes
 from pathlib import Path
@@ -55,6 +56,8 @@ from .components import SidebarButton, WindowControlBar
 from .pages import TrainingPage, ClassificationPage, SettingsPage
 from .workers import TrainingWorker, ClassificationWorker
 from core import ClothingClassifier
+
+logger = logging.getLogger(__name__)
 
 
 class MainWindow(QMainWindow):
@@ -922,33 +925,29 @@ class MainWindow(QMainWindow):
 
 def main():
     """应用主入口"""
-    import traceback
-
     try:
-        print("[1] 创建 QApplication...")
+        logger.info("[1] 创建 QApplication...")
         app = QApplication(sys.argv)
         app.setApplicationName("JiLing 服装分类系统")
         app.setOrganizationName("JiLing")
-        print("    QApplication 创建完成")
+        logger.info("    QApplication 创建完成")
 
-        print("[2] 加载字体...")
+        logger.info("[2] 加载字体...")
         FontManager.load_fonts()
-        print("    字体加载完成")
+        logger.info("    字体加载完成")
 
-        print("[3] 创建 MainWindow...")
+        logger.info("[3] 创建 MainWindow...")
         window = MainWindow()
-        print("    MainWindow 创建完成")
+        logger.info("    MainWindow 创建完成")
 
-        print("[4] 显示窗口...")
+        logger.info("[4] 显示窗口...")
         window.show()
-        print("    窗口已显示")
+        logger.info("    窗口已显示")
 
-        print("[5] 进入事件循环...")
+        logger.info("[5] 进入事件循环...")
         sys.exit(app.exec())
     except Exception as e:
-        print(f"\n错误: {type(e).__name__}: {e}")
-        traceback.print_exc()
-        input("按回车键退出...")
+        logger.exception("应用启动失败: %s", e)
         sys.exit(1)
 
 
@@ -961,3 +960,4 @@ def legacy_main():
 
 if __name__ == "__main__":
     main()
+

@@ -19,6 +19,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 from .model_factory import ModelFactory
+from src.utils.config_manager import config_manager
 
 logger = logging.getLogger(__name__)
 
@@ -120,25 +121,34 @@ class ClothingTrainer:
     """服装分类模型训练器"""
 
     def __init__(self,
-                 model_name: str = 'efficientnetv2_s',
-                 num_classes: int = 3,
+                 model_name: Optional[str] = None,
+                 num_classes: Optional[int] = None,
                  device: str = 'auto',
-                 input_size: int = 580,
+                 input_size: Optional[int] = None,
                  amp_enabled: bool = False):
         """
         初始化训练器
 
         Args:
-            model_name: 模型名称
-            num_classes: 分类数量
+            model_name: 模型名称（默认读取 config/model_config.yaml）
+            num_classes: 分类数量（默认读取 config/model_config.yaml）
             device: 计算设备
-            input_size: 输入图像尺寸 (与分类器一致使用580)
+            input_size: 输入图像尺寸（默认读取 config/model_config.yaml）
             amp_enabled: 是否启用混合精度训练
         """
-        self.model_name = model_name
-        self.num_classes = num_classes
+        model_settings = config_manager.get_model_settings()
+
+        resolved_model_name = model_name or model_settings["name"]
+        resolved_num_classes = int(num_classes or model_settings["num_classes"])
+        resolved_input_size = int(input_size or model_settings["image_size"])
+
+        if resolved_input_size <= 0:
+            raise ValueError(f"输入尺寸必须大于0，当前值: {resolved_input_size}")
+
+        self.model_name = ModelFactory.normalize_model_name(resolved_model_name)
+        self.num_classes = resolved_num_classes
         self.device = self._setup_device(device)
-        self.input_size = input_size
+        self.input_size = resolved_input_size
 
         # 混合精度训练
         self.amp_enabled = amp_enabled and torch.cuda.is_available()
@@ -167,10 +177,10 @@ class ClothingTrainer:
         self.progress_callback = None  # 签名: (batch_idx, total_batches, loss, acc) -> None
 
         logger.info(f"训练器初始化完成:")
-        logger.info(f"  模型: {model_name}")
+        logger.info(f"  模型: {self.model_name}")
         logger.info(f"  设备: {self.device}")
-        logger.info(f"  类别数: {num_classes}")
-        logger.info(f"  输入尺寸: {self.input_size}x{self.input_size} (与分类器一致的甜蜜点)")
+        logger.info(f"  类别数: {self.num_classes}")
+        logger.info(f"  输入尺寸: {self.input_size}x{self.input_size}")
         logger.info(f"  混合精度: {'启用' if self.amp_enabled else '禁用'}")
 
         # 清理GPU内存
@@ -724,7 +734,7 @@ if __name__ == "__main__":
     
     # 创建训练器
     trainer = ClothingTrainer(
-        model_name='efficientnetv2_s',
+        model_name='tf_efficientnetv2_s',
         num_classes=3,
         device='cuda' if torch.cuda.is_available() else 'cpu'
     )

@@ -17,6 +17,7 @@ from tqdm import tqdm
 import time
 
 from .model_factory import ModelFactory
+from src.utils.config_manager import config_manager
 
 logger = logging.getLogger(__name__)
 
@@ -24,19 +25,33 @@ logger = logging.getLogger(__name__)
 class ClothingClassifier:
     """服装图片分类器"""
     
-    def __init__(self, model_path: str, device: str = 'auto', model_name: str = 'efficientnetv2_s'):
+    def __init__(self,
+                 model_path: str,
+                 device: str = 'auto',
+                 model_name: Optional[str] = None,
+                 input_size: Optional[int] = None):
         """
         初始化分类器
         
         Args:
             model_path: 模型文件路径
             device: 计算设备 ('auto', 'cuda', 'cpu')
-            model_name: 模型名称
+            model_name: 模型名称（默认读取 config/model_config.yaml）
+            input_size: 输入尺寸（默认读取 config/model_config.yaml）
         """
+        model_settings = config_manager.get_model_settings()
+
+        resolved_model_name = model_name or model_settings["name"]
+        resolved_input_size = int(input_size or model_settings["image_size"])
+
+        if resolved_input_size <= 0:
+            raise ValueError(f"输入尺寸必须大于0，当前值: {resolved_input_size}")
+
         self.device = self._setup_device(device)
-        self.model_name = model_name
+        self.model_name = ModelFactory.normalize_model_name(resolved_model_name)
+        self.input_size = resolved_input_size
         self.model_path = model_path
-        self.classes = ['主图', '细节', '吊牌']  # 类别名称
+        self.classes = model_settings.get("classes", ['主图', '细节', '吊牌'])
         self.num_classes = len(self.classes)
         
         # 加载模型
@@ -103,11 +118,8 @@ class ClothingClassifier:
     
     def _get_transform(self) -> transforms.Compose:
         """获取图像预处理管道"""
-        # 使用580x580尺寸，在512和600之间寻找最佳甜蜜点
-        input_size = 580  # 测试580，接近512和600的中间值
-        
         transform = transforms.Compose([
-            transforms.Resize((input_size, input_size)),
+            transforms.Resize((self.input_size, self.input_size)),
             transforms.ToTensor(),
             transforms.Normalize(
                 mean=[0.485, 0.456, 0.406],  # ImageNet标准化
@@ -115,7 +127,7 @@ class ClothingClassifier:
             )
         ])
         
-        logger.info(f"图像预处理: 甜蜜点输入尺寸 {input_size}x{input_size}")
+        logger.info(f"图像预处理: 输入尺寸 {self.input_size}x{self.input_size}")
         return transform
     
     def predict_single(self, image_path: Union[str, Path]) -> Tuple[str, float, Dict]:
@@ -351,7 +363,7 @@ if __name__ == "__main__":
         model_path = "test_model.pth"
         
         # 保存一个简单的模型用于测试
-        test_model = ModelFactory.create_model('efficientnetv2_s', num_classes=3, pretrained=False)
+        test_model = ModelFactory.create_model('tf_efficientnetv2_s', num_classes=3, pretrained=False)
         torch.save(test_model.state_dict(), model_path)
         
         # 测试分类器初始化

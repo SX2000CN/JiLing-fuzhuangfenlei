@@ -11,18 +11,43 @@ import logging
 class ConfigManager:
     """配置管理器类"""
     
-    def __init__(self, config_dir: str = "config"):
+    def __init__(self, config_dir: Optional[str] = None):
         """
         初始化配置管理器
         
         Args:
-            config_dir: 配置文件目录路径
+            config_dir: 配置文件目录路径（默认使用项目根目录下的 config）
         """
-        self.config_dir = Path(config_dir)
+        if config_dir is None:
+            project_root = Path(__file__).resolve().parents[2]
+            self.config_dir = project_root / "config"
+        else:
+            candidate = Path(config_dir)
+            if candidate.is_absolute():
+                self.config_dir = candidate
+            else:
+                project_root = Path(__file__).resolve().parents[2]
+                self.config_dir = project_root / candidate
+
         self.configs = {}
         
         # 设置日志
         self.logger = logging.getLogger(__name__)
+
+    def ensure_config_loaded(self, config_name: str, required: bool = True) -> Optional[Dict[str, Any]]:
+        """
+        确保指定配置已加载
+
+        Args:
+            config_name: 配置文件名（不含扩展名）
+            required: 是否为必需配置
+
+        Returns:
+            配置字典
+        """
+        if config_name in self.configs:
+            return self.configs[config_name]
+        return self.load_config(config_name, required=required)
         
     def load_config(self, config_name: str, required: bool = True) -> Optional[Dict[str, Any]]:
         """
@@ -112,6 +137,24 @@ class ConfigManager:
             return value
         except (KeyError, TypeError):
             return default
+
+    def get_model_settings(self) -> Dict[str, Any]:
+        """
+        获取模型默认配置（单一真相源）
+
+        Returns:
+            包含 name/num_classes/image_size/pretrained/classes 的字典
+        """
+        model_config = self.ensure_config_loaded("model_config", required=False) or {}
+        model_section = model_config.get("model", {})
+
+        return {
+            "name": model_section.get("name", "tf_efficientnetv2_s"),
+            "num_classes": int(model_section.get("num_classes", 3)),
+            "image_size": int(model_section.get("image_size", 580)),
+            "pretrained": bool(model_section.get("pretrained", True)),
+            "classes": model_section.get("classes", ["主图", "细节", "吊牌"]),
+        }
     
     def save_config(self, config_name: str, config_data: Dict[str, Any]) -> None:
         """
