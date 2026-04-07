@@ -8,6 +8,7 @@ import sys
 import os
 import json
 import time
+import logging
 from pathlib import Path
 from threading import Thread
 from datetime import datetime
@@ -25,9 +26,13 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QThread, QObject, Signal, QTimer, QSize, QSettings
 from PySide6.QtGui import QPixmap, QFont, QIcon, QPalette, QColor
 
-# 添加项目路径
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+# 添加项目路径（兼容 core.* 与 src.* 两种导入）
+src_root = Path(__file__).parent.parent
+project_root = src_root.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+if str(src_root) not in sys.path:
+    sys.path.insert(0, str(src_root))
 
 # 可选依赖导入
 try:
@@ -45,6 +50,8 @@ except ImportError:
 from core.model_factory import ModelFactory
 from core.pytorch_classifier import ClothingClassifier
 from core.pytorch_trainer import ClothingTrainer
+
+logger = logging.getLogger(__name__)
 
 
 class TrainingWorker(QObject):
@@ -69,7 +76,7 @@ class TrainingWorker(QObject):
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
-                print("[OK] GPU memory cleared")
+                logger.info("[OK] GPU memory cleared")
 
             # 创建训练器
             trainer = ClothingTrainer(**self.trainer_config)
@@ -83,7 +90,7 @@ class TrainingWorker(QObject):
             if base_model_path and os.path.exists(base_model_path):
                 self.progress_updated.emit(8, "加载基础模型...", {})
                 trainer.load_model(base_model_path)
-                print(f"[OK] Base model loaded: {base_model_path}")
+                logger.info(f"[OK] Base model loaded: {base_model_path}")
             
             # 设置优化器
             self.progress_updated.emit(10, "设置优化器...", {})
@@ -112,7 +119,7 @@ class TrainingWorker(QObject):
                     import torch
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
-                        print(f"[OK] Epoch {epoch}: GPU memory cleared")
+                        logger.info(f"[OK] Epoch {epoch}: GPU memory cleared")
                 
                 # 训练一个epoch
                 train_loss, train_acc = trainer.train_epoch(train_loader)
@@ -194,7 +201,7 @@ class TrainingWorker(QObject):
                 torch.cuda.synchronize()
             
         except Exception as e:
-            print(f"清理GPU内存时出错: {e}")
+            logger.info(f"清理GPU内存时出错: {e}")
     
     def stop_training(self):
         """停止训练"""
@@ -215,7 +222,7 @@ class ClassificationWorker(QObject):
     def start_classification(self):
         """批量分类并移动图片到对应文件夹"""
         start_time = time.time()
-        print(f"ClassificationWorker: 开始分类任务 - {datetime.now().strftime('%H:%M:%S')}")
+        logger.info(f"ClassificationWorker: 开始分类任务 - {datetime.now().strftime('%H:%M:%S')}")
         try:
             import os
             import torch
@@ -231,7 +238,7 @@ class ClassificationWorker(QObject):
             results = []
             
             init_time = time.time()
-            print(f"[TIME] Init done, time: {init_time - start_time:.3f}s")
+            logger.info(f"[TIME] Init done, time: {init_time - start_time:.3f}s")
 
             # 读取输出文件夹
             output_folder = None
@@ -253,7 +260,7 @@ class ClassificationWorker(QObject):
             for class_name in classifier.classes:
                 (output_folder / class_name).mkdir(parents=True, exist_ok=True)
             folder_time = time.time()
-            print(f"[TIME] Folder creation done, time: {folder_time - folder_start:.3f}s")
+            logger.info(f"[TIME] Folder creation done, time: {folder_time - folder_start:.3f}s")
 
             # 智能批次大小优化 - 根据GPU显存和图片数量动态调整
             gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3 if torch.cuda.is_available() else 4
@@ -272,8 +279,8 @@ class ClassificationWorker(QObject):
             else:
                 batch_size = base_batch_size
 
-            print(f"[GPU] Optimized mode - batch size {batch_size} (GPU: {gpu_memory_gb:.1f}GB) processing {total_images} images")
-            print(f"[TIME] Batch processing started - {datetime.now().strftime('%H:%M:%S')}")
+            logger.info(f"[GPU] Optimized mode - batch size {batch_size} (GPU: {gpu_memory_gb:.1f}GB) processing {total_images} images")
+            logger.info(f"[TIME] Batch processing started - {datetime.now().strftime('%H:%M:%S')}")
 
             total_preprocess_time = 0
             total_inference_time = 0
@@ -284,7 +291,7 @@ class ClassificationWorker(QObject):
                 batch_end = min(batch_start + batch_size, total_images)
                 batch_paths = self.image_paths[batch_start:batch_end]
 
-                print(f"[BATCH] Processing batch {batch_start//batch_size + 1}, images: {batch_start+1}-{batch_end}")
+                logger.info(f"[BATCH] Processing batch {batch_start//batch_size + 1}, images: {batch_start+1}-{batch_end}")
                 
                 # 更新进度
                 progress = int((batch_end) * 100 / total_images)
@@ -311,7 +318,7 @@ class ClassificationWorker(QObject):
                 # 20线程 - 经过系统测试验证的最优配置 (29.48张/秒)
                 optimal_workers = 20  # 最优20线程配置
 
-                print(f"[PERF] Using {optimal_workers} threads (verified best: 29.48 img/s)")
+                logger.info(f"[PERF] Using {optimal_workers} threads (verified best: 29.48 img/s)")
                 
                 with concurrent.futures.ThreadPoolExecutor(max_workers=optimal_workers) as executor:
                     parallel_results = list(executor.map(preprocess_single_image, batch_paths))
@@ -324,7 +331,7 @@ class ClassificationWorker(QObject):
                         valid_paths.append(image_path)
                     else:  # 失败
                         image_path, _, error = result
-                        print(f"预处理失败 {image_path}: {error}")
+                        logger.info(f"预处理失败 {image_path}: {error}")
                         results.append({
                             'path': image_path,
                             'result': {'predicted_class': 'error', 'confidence': 0.0, 'error': error}
@@ -333,7 +340,7 @@ class ClassificationWorker(QObject):
                 preprocess_end = time.time()
                 preprocess_time = preprocess_end - preprocess_start
                 total_preprocess_time += preprocess_time
-                print(f"[TIME] Batch preprocess done, {len(batch_tensors)} images, time: {preprocess_time:.3f}s")
+                logger.info(f"[TIME] Batch preprocess done, {len(batch_tensors)} images, time: {preprocess_time:.3f}s")
                 
                 if not batch_tensors:
                     continue
@@ -353,7 +360,7 @@ class ClassificationWorker(QObject):
                     inference_end = time.time()
                     inference_time = inference_end - inference_start
                     total_inference_time += inference_time
-                    print(f"[TIME] GPU inference done, {len(batch_tensors)} images, time: {inference_time:.3f}s")
+                    logger.info(f"[TIME] GPU inference done, {len(batch_tensors)} images, time: {inference_time:.3f}s")
                     
                     # 立即处理批量结果，减少GPU内存占用时间
                     file_move_start = time.time()
@@ -387,20 +394,20 @@ class ClassificationWorker(QObject):
                             'result': result
                         })
                         
-                        print(f"批量处理: {Path(image_path).name} -> {predicted_class} ({confidence_score:.2f})")
+                        logger.info(f"批量处理: {Path(image_path).name} -> {predicted_class} ({confidence_score:.2f})")
                     
                     file_move_end = time.time()
                     file_move_time = file_move_end - file_move_start
                     total_file_move_time += file_move_time
                     
                     batch_total_time = time.time() - batch_start_time
-                    print(f"[TIME] Batch file move done, {len(valid_paths)} images, time: {file_move_time:.3f}s")
-                    print(f"[STATS] Batch total: {batch_total_time:.3f}s (preprocess:{preprocess_time:.3f}s + inference:{inference_time:.3f}s + move:{file_move_time:.3f}s)")
-                    print(f"[PERF] Average per image: {batch_total_time/len(valid_paths):.3f}s/img")
-                    print("-" * 60)
+                    logger.info(f"[TIME] Batch file move done, {len(valid_paths)} images, time: {file_move_time:.3f}s")
+                    logger.info(f"[STATS] Batch total: {batch_total_time:.3f}s (preprocess:{preprocess_time:.3f}s + inference:{inference_time:.3f}s + move:{file_move_time:.3f}s)")
+                    logger.info(f"[PERF] Average per image: {batch_total_time/len(valid_paths):.3f}s/img")
+                    logger.info("-" * 60)
                 
                 except Exception as e:
-                    print(f"批量推理失败: {e}")
+                    logger.info(f"批量推理失败: {e}")
                     # 降级到单张处理
                     for image_path in valid_paths:
                         try:
@@ -424,23 +431,23 @@ class ClassificationWorker(QObject):
             total_end_time = time.time()
             total_time = total_end_time - start_time
             
-            print("=" * 60)
-            print(f"[DONE] Classification complete! - {datetime.now().strftime('%H:%M:%S')}")
-            print(f"[STATS] Overall performance:")
-            print(f"   - Total time: {total_time:.3f}s")
-            print(f"   - Images processed: {len(results)}")
-            print(f"   - Average speed: {len(results)/total_time:.2f} img/s")
-            print(f"   - Preprocess total: {total_preprocess_time:.3f}s ({total_preprocess_time/total_time*100:.1f}%)")
-            print(f"   - GPU inference total: {total_inference_time:.3f}s ({total_inference_time/total_time*100:.1f}%)")
-            print(f"   - File move total: {total_file_move_time:.3f}s ({total_file_move_time/total_time*100:.1f}%)")
-            print(f"   - Other: {total_time-total_preprocess_time-total_inference_time-total_file_move_time:.3f}s")
-            print("=" * 60)
+            logger.info("=" * 60)
+            logger.info(f"[DONE] Classification complete! - {datetime.now().strftime('%H:%M:%S')}")
+            logger.info(f"[STATS] Overall performance:")
+            logger.info(f"   - Total time: {total_time:.3f}s")
+            logger.info(f"   - Images processed: {len(results)}")
+            logger.info(f"   - Average speed: {len(results)/total_time:.2f} img/s")
+            logger.info(f"   - Preprocess total: {total_preprocess_time:.3f}s ({total_preprocess_time/total_time*100:.1f}%)")
+            logger.info(f"   - GPU inference total: {total_inference_time:.3f}s ({total_inference_time/total_time*100:.1f}%)")
+            logger.info(f"   - File move total: {total_file_move_time:.3f}s ({total_file_move_time/total_time*100:.1f}%)")
+            logger.info(f"   - Other: {total_time-total_preprocess_time-total_inference_time-total_file_move_time:.3f}s")
+            logger.info("=" * 60)
             
-            print(f"ClassificationWorker: 分类完成，处理了 {len(results)} 张图片")
+            logger.info(f"ClassificationWorker: 分类完成，处理了 {len(results)} 张图片")
             self.classification_completed.emit(results)
             
         except Exception as e:
-            print(f"ClassificationWorker: 分类失败: {str(e)}")
+            logger.info(f"ClassificationWorker: 分类失败: {str(e)}")
             self.progress_updated.emit(0, f"分类失败: {str(e)}")
             self.classification_completed.emit([])
 
@@ -1221,7 +1228,7 @@ class MainWindow(QMainWindow):
         
     def create_model_tab(self):
         """创建模型管理选项卡 - 重设计版本"""
-        print("DEBUG: create_model_tab 被调用")
+        logger.info("DEBUG: create_model_tab 被调用")
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
@@ -1239,6 +1246,9 @@ class MainWindow(QMainWindow):
 
         # 设置分割器比例
         splitter.setSizes([400, 600])
+
+        # 右侧统计控件创建完成后再刷新一次，避免初次加载显示为默认值
+        self._refresh_model_list()
 
         self.tab_widget.addTab(tab, "模型管理")
 
@@ -1360,7 +1370,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(stats_group)
 
         # 自动加载设置
-        print("DEBUG: 创建自动加载控件")
+        logger.info("DEBUG: 创建自动加载控件")
         auto_load_group = QGroupBox("自动加载设置")
         auto_load_layout = QVBoxLayout(auto_load_group)
 
@@ -1563,188 +1573,75 @@ class MainWindow(QMainWindow):
 
         return tab
 
-    def _create_performance_tab(self):
-        """创建性能监控选项卡"""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-
-        # 实时性能指标
-        metrics_group = QGroupBox("实时性能指标")
-        metrics_layout = QGridLayout(metrics_group)
-
-        # 推理速度
-        self.inference_speed_label = QLabel("推理速度: -- FPS")
-        self.inference_speed_label.setStyleSheet("font-weight: bold; color: #2e7d32;")
-
-        # 内存使用
-        self.memory_usage_label = QLabel("内存使用: -- MB")
-        self.memory_usage_label.setStyleSheet("font-weight: bold; color: #1976d2;")
-
-        # GPU利用率
-        self.gpu_usage_label = QLabel("GPU利用率: --%")
-        self.gpu_usage_label.setStyleSheet("font-weight: bold; color: #f57c00;")
-
-        # 温度
-        self.temperature_label = QLabel("温度: --°C")
-        self.temperature_label.setStyleSheet("font-weight: bold; color: #d32f2f;")
-
-        metrics_layout.addWidget(self.inference_speed_label, 0, 0)
-        metrics_layout.addWidget(self.memory_usage_label, 0, 1)
-        metrics_layout.addWidget(self.gpu_usage_label, 1, 0)
-        metrics_layout.addWidget(self.temperature_label, 1, 1)
-
-        layout.addWidget(metrics_group)
-
-        # 性能图表区域
-        chart_group = QGroupBox("性能趋势图")
-        chart_layout = QVBoxLayout(chart_group)
-
-        self.performance_chart_placeholder = QLabel("Performance Chart Area\n(requires matplotlib)")
-        self.performance_chart_placeholder.setAlignment(Qt.AlignCenter)
-        self.performance_chart_placeholder.setStyleSheet("""
-            QLabel {
-                background-color: #f5f5f5;
-                border: 2px dashed #ccc;
-                border-radius: 5px;
-                padding: 20px;
-                color: #666;
-            }
-        """)
-        chart_layout.addWidget(self.performance_chart_placeholder)
-
-        layout.addWidget(chart_group)
-
-        # 控制按钮
-        control_layout = QHBoxLayout()
-
-        self.start_monitoring_btn = QPushButton("Start Monitor")
-        self.start_monitoring_btn.clicked.connect(self._start_performance_monitoring)
-        control_layout.addWidget(self.start_monitoring_btn)
-
-        self.stop_monitoring_btn = QPushButton("Stop Monitor")
-        self.stop_monitoring_btn.clicked.connect(self._stop_performance_monitoring)
-        self.stop_monitoring_btn.setEnabled(False)
-        control_layout.addWidget(self.stop_monitoring_btn)
-
-        control_layout.addStretch()
-        layout.addLayout(control_layout)
-
-        return tab
-
-    def _on_auto_load_changed(self):
-        """刷新模型统计信息"""
-        try:
-            models_dir = Path("models")
-            if not models_dir.exists():
-                models_dir.mkdir(exist_ok=True)
-
-            total_size = 0
-            model_count = 0
-
-            for model_file in models_dir.glob("*.pth"):
-                if model_file.is_file():
-                    file_size = model_file.stat().st_size / (1024 * 1024)  # MB
-                    total_size += file_size
-                    model_count += 1
-
-            self.model_count_label.setText(str(model_count))
-            self.total_size_label.setText(".1f")
-
-        except Exception as e:
-            QMessageBox.warning(self, "错误", f"刷新统计信息失败: {str(e)}")
-
-    def _on_auto_load_model_changed(self):
-        """打开模型目录"""
+    def _collect_model_files(self):
+        """收集可用模型文件（根目录与saved_models目录）"""
         models_dir = Path("models")
-        if not models_dir.exists():
-            models_dir.mkdir(exist_ok=True)
+        models_dir.mkdir(exist_ok=True)
 
-        import subprocess
-        import platform
-        try:
-            if platform.system() == "Windows":
-                subprocess.run(["explorer", str(models_dir)])
-            elif platform.system() == "Darwin":  # macOS
-                subprocess.run(["open", str(models_dir)])
-            else:  # Linux
-                subprocess.run(["xdg-open", str(models_dir)])
-        except Exception as e:
-            QMessageBox.warning(self, "错误", f"无法打开目录: {str(e)}")
+        search_dirs = [models_dir, models_dir / "saved_models"]
+        model_files = []
+        seen_paths = set()
 
-    def _browse_custom_model(self):
-        """打开数据目录"""
-        data_dir = Path("data")
-        if not data_dir.exists():
-            data_dir.mkdir(exist_ok=True)
+        for search_dir in search_dirs:
+            if not search_dir.exists():
+                continue
+            for model_file in search_dir.glob("*.pth"):
+                if not model_file.is_file():
+                    continue
+                model_key = str(model_file.resolve())
+                if model_key in seen_paths:
+                    continue
+                seen_paths.add(model_key)
+                model_files.append(model_file)
 
-        import subprocess
-        import platform
-        try:
-            if platform.system() == "Windows":
-                subprocess.run(["explorer", str(data_dir)])
-            elif platform.system() == "Darwin":  # macOS
-                subprocess.run(["open", str(data_dir)])
-            else:  # Linux
-                subprocess.run(["xdg-open", str(data_dir)])
-        except Exception as e:
-            QMessageBox.warning(self, "错误", f"无法打开目录: {str(e)}")
-
-    def _save_auto_load_settings(self):
-        """打开输出目录"""
-        output_dir = Path("outputs")
-        if not output_dir.exists():
-            output_dir.mkdir(exist_ok=True)
-
-        import subprocess
-        import platform
-        try:
-            if platform.system() == "Windows":
-                subprocess.run(["explorer", str(output_dir)])
-            elif platform.system() == "Darwin":  # macOS
-                subprocess.run(["open", str(output_dir)])
-            else:  # Linux
-                subprocess.run(["xdg-open", str(output_dir)])
-        except Exception as e:
-            QMessageBox.warning(self, "错误", f"无法打开目录: {str(e)}")
+        return model_files
 
     def _refresh_model_list(self):
         """刷新模型文件列表"""
         try:
             self.model_tree.clear()
 
-            # 扫描models目录
             models_dir = Path("models")
-            if not models_dir.exists():
-                models_dir.mkdir(exist_ok=True)
 
             total_size = 0
             model_count = 0
+            latest_model_name = "无"
+            latest_model_time = 0
 
-            for model_file in models_dir.glob("*.pth"):
-                if model_file.is_file():
-                    # 获取文件信息
-                    file_size = model_file.stat().st_size / (1024 * 1024)  # MB
-                    mod_time = model_file.stat().st_mtime
-                    mod_time_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(mod_time))
+            for model_file in self._collect_model_files():
+                # 获取文件信息
+                file_size = model_file.stat().st_size / (1024 * 1024)  # MB
+                mod_time = model_file.stat().st_mtime
+                mod_time_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(mod_time))
 
-                    # 创建树节点
-                    item = QTreeWidgetItem(self.model_tree)
-                    item.setText(0, model_file.name)
-                    item.setText(1, ".1f")
-                    item.setText(2, mod_time_str)
-                    item.setText(3, "可用")
+                try:
+                    display_name = model_file.relative_to(models_dir).as_posix()
+                except ValueError:
+                    display_name = model_file.name
 
-                    # 存储文件路径
-                    item.setData(0, Qt.UserRole, str(model_file))
+                # 创建树节点
+                item = QTreeWidgetItem(self.model_tree)
+                item.setText(0, display_name)
+                item.setText(1, f"{file_size:.1f} MB")
+                item.setText(2, mod_time_str)
+                item.setText(3, "可用")
 
-                    total_size += file_size
-                    model_count += 1
+                # 存储文件路径
+                item.setData(0, Qt.UserRole, str(model_file))
+
+                total_size += file_size
+                model_count += 1
+                if mod_time > latest_model_time:
+                    latest_model_time = mod_time
+                    latest_model_name = display_name
 
             # 更新统计信息
             if hasattr(self, 'total_models_label'):
                 self.total_models_label.setText(f"总模型数: {model_count}")
             if hasattr(self, 'total_size_label'):
-                self.total_size_label.setText(".1f")
+                self.total_size_label.setText(f"总大小: {total_size:.1f} MB")
+            if hasattr(self, 'recent_models_label'):
+                self.recent_models_label.setText(f"最近使用: {latest_model_name}")
 
         except Exception as e:
             QMessageBox.warning(self, "错误", f"刷新模型列表失败: {str(e)}")
@@ -1898,16 +1795,21 @@ class MainWindow(QMainWindow):
             # GPU信息
             if torch.cuda.is_available():
                 if GPU_UTIL_AVAILABLE:
-                    gpu = GPUtil.getGPUs()[0]
-                    self.gpu_usage_label.setText(".1f")
-                    self.temperature_label.setText(f"温度: {gpu.temperature}°C")
+                    gpus = GPUtil.getGPUs()
+                    if gpus:
+                        gpu = gpus[0]
+                        self.gpu_usage_label.setText(f"GPU利用率: {gpu.load * 100:.1f}%")
+                        self.temperature_label.setText(f"温度: {gpu.temperature}°C")
+                    else:
+                        self.gpu_usage_label.setText("GPU利用率: N/A")
+                        self.temperature_label.setText("温度: N/A")
                 else:
                     self.gpu_usage_label.setText("GPU利用率: 需要GPUtil")
                     self.temperature_label.setText("温度: 需要GPUtil")
 
                 # 内存使用
                 memory_allocated = torch.cuda.memory_allocated() / 1024 / 1024  # MB
-                self.memory_usage_label.setText(".1f")
+                self.memory_usage_label.setText(f"内存使用: {memory_allocated:.1f} MB")
             else:
                 self.gpu_usage_label.setText("GPU利用率: N/A")
                 self.temperature_label.setText("温度: N/A")
@@ -1926,7 +1828,7 @@ class MainWindow(QMainWindow):
             self.inference_speed_label.setText("推理速度: -- FPS")
 
         except Exception as e:
-            print(f"更新性能指标失败: {e}")
+            logger.info(f"更新性能指标失败: {e}")
             self.inference_speed_label.setText("推理速度: 错误")
             self.memory_usage_label.setText("内存使用: 错误")
             self.gpu_usage_label.setText("GPU利用率: 错误")
@@ -2161,7 +2063,7 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
             self.current_classifier = ClothingClassifier(
                 model_path=model_path,
                 device='auto',
-                model_name=config.get("model_config", {}).get("model_name", "efficientnetv2_s")
+                model_name=config.get("model_config", {}).get("model_name", "tf_efficientnetv2_s")
             )
             
             self.model_status_label.setText(f"状态: 已加载 {os.path.basename(model_path)}")
@@ -2199,7 +2101,7 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
             for model_path, model_desc in possible_models:
                 model_full_path = os.path.join(project_root, model_path)
                 if os.path.exists(model_full_path):
-                    print(f"找到模型文件: {model_path} ({model_desc})")
+                    logger.info(f"找到模型文件: {model_path} ({model_desc})")
                     self.model_file_edit.setText(model_path)
                     self.load_model()
                     return
@@ -2257,12 +2159,12 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
                 if hasattr(self, 'data_path_edit'):
                     self.data_path_edit.setText(last_training_folder)
             
-            print(f"[OK] Path memory loaded:")
-            print(f"  Classification folder: {last_classification_folder}")
-            print(f"  Training folder: {last_training_folder}")
+            logger.info(f"[OK] Path memory loaded:")
+            logger.info(f"  Classification folder: {last_classification_folder}")
+            logger.info(f"  Training folder: {last_training_folder}")
 
         except Exception as e:
-            print(f"[WARN] Failed to load path memory: {e}")
+            logger.info(f"[WARN] Failed to load path memory: {e}")
     
     def save_current_paths(self):
         """保存当前路径"""
@@ -2279,7 +2181,7 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
                     self.settings.setValue("last_training_folder", current_training_folder)
 
         except Exception as e:
-            print(f"[WARN] Failed to save path: {e}")
+            logger.info(f"[WARN] Failed to save path: {e}")
     
     def closeEvent(self, event):
         """窗口关闭事件"""
@@ -2290,7 +2192,7 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
     
     def start_classification(self):
         """开始分类"""
-        print("start_classification 函数被调用")  # 调试信息
+        logger.info("start_classification 函数被调用")  # 调试信息
         
         # 保存当前使用的路径
         self.save_current_paths()
@@ -2300,13 +2202,13 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
         
         # 单个文件
         single_file = self.single_file_edit.text().strip()
-        print(f"单个文件路径: {single_file}")  # 调试信息
+        logger.info(f"单个文件路径: {single_file}")  # 调试信息
         if single_file and os.path.exists(single_file):
             image_paths.append(single_file)
         
         # 文件夹
         folder_path = self.folder_edit.text().strip()
-        print(f"文件夹路径: {folder_path}")  # 调试信息
+        logger.info(f"文件夹路径: {folder_path}")  # 调试信息
         if folder_path and os.path.exists(folder_path):
             extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff']
             for ext in extensions:
@@ -2316,60 +2218,60 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
             # 去重，因为可能有重复的文件
             image_paths = list(set(image_paths))
         
-        print(f"找到图像文件数量: {len(image_paths)}")  # 调试信息
+        logger.info(f"找到图像文件数量: {len(image_paths)}")  # 调试信息
         
         if not image_paths:
             QMessageBox.warning(self, "警告", "请选择要分类的图像文件或文件夹！")
             return
         
         # 检查是否有加载的模型
-        print(f"当前分类器状态: {self.current_classifier}")  # 调试信息
+        logger.info(f"当前分类器状态: {self.current_classifier}")  # 调试信息
         if self.current_classifier is None:
-            print("分类器为空，询问是否使用默认模型")  # 调试信息
+            logger.info("分类器为空，询问是否使用默认模型")  # 调试信息
             reply = QMessageBox.question(
                 self, "未加载模型",
                 "未检测到已加载的模型，是否使用默认模型？",
                 QMessageBox.Yes | QMessageBox.No
             )
             if reply == QMessageBox.Yes:
-                print("用户选择使用默认模型")  # 调试信息
+                logger.info("用户选择使用默认模型")  # 调试信息
                 self.use_default_model()
-                print(f"使用默认模型后分类器状态: {self.current_classifier}")  # 调试信息
+                logger.info(f"使用默认模型后分类器状态: {self.current_classifier}")  # 调试信息
                 if self.current_classifier is None:
-                    print("默认模型加载失败，返回")  # 调试信息
+                    logger.info("默认模型加载失败，返回")  # 调试信息
                     return
             else:
-                print("用户选择不使用默认模型，返回")  # 调试信息
+                logger.info("用户选择不使用默认模型，返回")  # 调试信息
                 return
         
-        print("开始准备分类线程")  # 调试信息
+        logger.info("开始准备分类线程")  # 调试信息
         
         # 转换为字符串路径
         image_paths = [str(p) for p in image_paths]
-        print(f"转换后的图像路径数量: {len(image_paths)}")  # 调试信息
+        logger.info(f"转换后的图像路径数量: {len(image_paths)}")  # 调试信息
         
         # 禁用按钮，显示进度条
-        print("禁用按钮，显示进度条")  # 调试信息
+        logger.info("禁用按钮，显示进度条")  # 调试信息
         self.classify_btn.setEnabled(False)
         self.classification_progress.setVisible(True)
         self.classification_progress.setValue(0)
         
         # 创建分类工作线程，传入当前分类器
-        print("创建分类工作线程")  # 调试信息
+        logger.info("创建分类工作线程")  # 调试信息
         self.classification_worker = ClassificationWorker(image_paths, self.current_classifier)
         self.classification_thread = QThread()
         self.classification_worker.moveToThread(self.classification_thread)
         
         # 连接信号
-        print("连接信号")  # 调试信息
+        logger.info("连接信号")  # 调试信息
         self.classification_worker.progress_updated.connect(self.update_classification_progress)
         self.classification_worker.classification_completed.connect(self.classification_completed)
         self.classification_thread.started.connect(self.classification_worker.start_classification)
         
         # 启动线程
-        print("启动线程")  # 调试信息
+        logger.info("启动线程")  # 调试信息
         self.classification_thread.start()
-        print("线程启动完成")  # 调试信息
+        logger.info("线程启动完成")  # 调试信息
     
     def update_classification_progress(self, progress, message):
         """更新分类进度"""
@@ -2595,10 +2497,10 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
         try:
             # 检查控件是否已创建
             if not hasattr(self, 'auto_load_checkbox'):
-                print("自动加载控件尚未创建，跳过设置加载")
-                print("调试信息: 检查对象属性...")
+                logger.info("自动加载控件尚未创建，跳过设置加载")
+                logger.info("调试信息: 检查对象属性...")
                 attrs = [attr for attr in dir(self) if 'auto' in attr.lower()]
-                print(f"包含'auto'的属性: {attrs}")
+                logger.info(f"包含'auto'的属性: {attrs}")
                 return
             
             # 从QSettings加载设置
@@ -2619,29 +2521,29 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
             self._on_auto_load_changed(Qt.Checked if auto_load_enabled else Qt.Unchecked)
             
         except Exception as e:
-            print(f"加载自动加载设置失败: {e}")
+            logger.info(f"加载自动加载设置失败: {e}")
     
     def _auto_load_model_on_startup(self):
         """启动时自动加载模型"""
         try:
-            print("DEBUG: 开始执行自动加载")
+            logger.info("DEBUG: 开始执行自动加载")
             # 检查控件是否已创建
             if not hasattr(self, 'auto_load_checkbox'):
-                print("自动加载控件尚未创建，跳过自动加载")
+                logger.info("自动加载控件尚未创建，跳过自动加载")
                 return
             
             if not self.auto_load_checkbox.isChecked():
-                print("自动加载未启用")
+                logger.info("自动加载未启用")
                 return
             
             model_type = self.auto_load_model_combo.currentData()
-            print(f"DEBUG: 自动加载模型类型: {model_type}")
+            logger.info(f"DEBUG: 自动加载模型类型: {model_type}")
             
             if model_type == "latest":
-                print("DEBUG: 调用 use_default_model()")
+                logger.info("DEBUG: 调用 use_default_model()")
                 # 自动加载最新训练的模型
                 self.use_default_model()
-                print(f"DEBUG: use_default_model() 执行完成, 分类器状态: {self.current_classifier is not None}")
+                logger.info(f"DEBUG: use_default_model() 执行完成, 分类器状态: {self.current_classifier is not None}")
             elif model_type == "best":
                 # 自动加载最佳性能模型
                 self._load_best_model()
@@ -2653,25 +2555,20 @@ GPU内存: {torch.cuda.get_device_properties(0).total_memory // 1024**3} GB
                     self.load_model()
                     
         except Exception as e:
-            print(f"自动加载模型失败: {e}")
+            logger.info(f"自动加载模型失败: {e}")
     
     def _load_best_model(self):
         """加载最佳性能模型"""
         try:
-            # 查找最佳模型（这里可以根据验证准确率或其他指标选择）
-            models_dir = Path("models")
-            if not models_dir.exists():
-                return
-            
             # 简单策略：选择最新的模型作为"最佳"模型
-            model_files = list(models_dir.glob("*.pth"))
+            model_files = self._collect_model_files()
             if model_files:
                 best_model = max(model_files, key=lambda x: x.stat().st_mtime)
                 self.model_file_edit.setText(str(best_model))
                 self.load_model()
                 
         except Exception as e:
-            print(f"加载最佳模型失败: {e}")
+            logger.info(f"加载最佳模型失败: {e}")
 
 
 def main():
@@ -2693,3 +2590,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

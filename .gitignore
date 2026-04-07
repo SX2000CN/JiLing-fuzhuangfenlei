@@ -76,11 +76,11 @@ interactive_test.py
 # Node.js
 node_modules/
 
-# 调试输出文件
+# 璋冭瘯杈撳嚭鏂囦欢
 debug_output.txt
 debug_stdout.txt
 debug_test.py
 nul
 
-# 临时调试目录
+# 涓存椂璋冭瘯鐩綍
 .tmp_icon_debug/

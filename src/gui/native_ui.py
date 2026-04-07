@@ -29,8 +29,11 @@ from PySide6.QtSvg import QSvgRenderer
 # 获取项目根目录
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
-# 添加项目路径到 sys.path，确保可以导入 src.core 模块
+# 添加项目路径到 sys.path，兼容 core.* 与 src.* 导入
+_project_root_path = str(PROJECT_ROOT)
 _src_path = str(PROJECT_ROOT / "src")
+if _project_root_path not in sys.path:
+    sys.path.insert(0, _project_root_path)
 if _src_path not in sys.path:
     sys.path.insert(0, _src_path)
 

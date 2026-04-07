@@ -24,6 +24,8 @@ try:
     from PySide6.QtCore import QSettings
     from PySide6.QtWidgets import QApplication
     from src.core.pytorch_classifier import ClothingClassifier
+    from src.core.model_factory import ModelFactory
+    from src.utils.config_manager import config_manager
 except ImportError as e:
     print(f"[ERROR] Import failed: {e}")
     print("Please ensure PySide6 and dependencies are installed")
@@ -90,10 +92,13 @@ class CommandLineClassifier:
         print(f"  Model: {model_path}")
 
         try:
+            model_settings = config_manager.get_model_settings()
+            configured_model_name = ModelFactory.normalize_model_name(model_settings["name"])
+
             # 创建分类器，使用正确的配置
             self.classifier = ClothingClassifier(
                 model_path=model_path,
-                model_name='tf_efficientnetv2_s',  # 使用正确的模型名称
+                model_name=configured_model_name,
                 device='auto'
             )
             print("[OK] Classifier initialized successfully")

@@ -3,10 +3,10 @@
 """
 启动 JiLing 服装分类系统 GUI
 
-使用模块化的新架构：
-- 主题支持（深色/浅色/跟随系统）
-- 模块化页面（训练/分类/设置）
-- VS Code 风格界面
+统一 GUI 启动入口：
+- 默认：稳定新界面（src.gui.native_ui）
+- --modular：模块化新架构（src.gui.app）
+- --traditional：传统界面（src.gui.main_window）
 """
 
 import sys
@@ -17,15 +17,26 @@ project_root = os.path.dirname(os.path.abspath(__file__))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# 默认使用新的模块化架构
-USE_LEGACY = False  # 设为 True 使用旧版 native_ui.py
+
+def resolve_gui_mode(argv):
+    """解析启动模式，稳定版优先。"""
+    if "--modular" in argv:
+        return "modular"
+    if "--traditional" in argv:
+        return "traditional"
+    if "--legacy" in argv:
+        return "stable"
+    return "stable"
 
 if __name__ == "__main__":
-    if USE_LEGACY or "--legacy" in sys.argv:
-        # 使用旧版界面
-        from src.gui.native_ui import main
-        main()
-    else:
-        # 使用新的模块化界面
+    mode = resolve_gui_mode(sys.argv[1:])
+
+    if mode == "modular":
         from src.gui.app import main
-        main()
+    elif mode == "traditional":
+        from src.gui.main_window import main
+    else:
+        # 默认使用稳定版新界面
+        from src.gui.native_ui import main
+
+    main()
