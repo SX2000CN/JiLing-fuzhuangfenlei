@@ -151,6 +151,7 @@ class SettingsManager:
         return {
             "theme": self._theme_to_display(s.get("appearance", {}).get("theme", "dark")),
             "scale": s.get("appearance", {}).get("scale", "100%"),
+            "animations_enabled": s.get("appearance", {}).get("animations_enabled", True),
             "device": self._device_to_display(s.get("model", {}).get("device", "auto")),
             "precision": self._precision_to_display(s.get("model", {}).get("precision", "fp32")),
             "confidence_threshold": s.get("model", {}).get("confidence_threshold", 0.5),
@@ -180,6 +181,8 @@ class SettingsManager:
             self.set("appearance.theme", self._display_to_theme(gui_settings["theme"]))
         if "scale" in gui_settings:
             self.set("appearance.scale", gui_settings["scale"])
+        if "animations_enabled" in gui_settings:
+            self.set("appearance.animations_enabled", gui_settings["animations_enabled"])
         if "device" in gui_settings:
             self.set("model.device", self._display_to_device(gui_settings["device"]))
         if "precision" in gui_settings:
