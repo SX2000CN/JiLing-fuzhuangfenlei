@@ -185,6 +185,11 @@ class SettingsPage(QWidget):
         row_scale.set_control(self.scale_combo)
         layout.addWidget(row_scale)
 
+        # 动画开关
+        self.animations_check = SettingsCheckRow("启用界面动画", "启用页面切换与按钮交互动效")
+        self.animations_check.setChecked(True)
+        layout.addWidget(self.animations_check)
+
     def _create_model_settings(self, layout: QVBoxLayout):
         """创建模型设置"""
         layout.addWidget(self._create_section_title("模型设置"))
@@ -395,6 +400,7 @@ class SettingsPage(QWidget):
         return {
             "theme": self.theme_combo.currentText(),
             "scale": self.scale_combo.currentText(),
+            "animations_enabled": self.animations_check.isChecked(),
             "device": self.device_combo.currentText(),
             "precision": self.precision_combo.currentText(),
             "confidence_threshold": self.confidence_spin.value(),
@@ -429,6 +435,9 @@ class SettingsPage(QWidget):
             index = self.scale_combo.findText(settings["scale"])
             if index >= 0:
                 self.scale_combo.setCurrentIndex(index)
+
+        if "animations_enabled" in settings:
+            self.animations_check.setChecked(settings["animations_enabled"])
 
         if "device" in settings:
             index = self.device_combo.findText(settings["device"])

@@ -53,6 +53,7 @@ if _src_path not in sys.path:
 from .theme import StyleSheet, theme_manager, ColorTokens
 from .utils import FontManager, IconSvg, SettingsManager
 from .components import SidebarButton, WindowControlBar
+from .widgets import GPUStatusWidget
 from .pages import TrainingPage, ClassificationPage, SettingsPage
 from .workers import TrainingWorker, ClassificationWorker
 from core import ClothingClassifier
@@ -63,6 +64,7 @@ logger = logging.getLogger(__name__)
 class MainWindow(QMainWindow):
     """主窗口 - 无边框 + 细边框装饰"""
 
+    SIDEBAR_WIDTH = 72
     CORNER_RADIUS = 10  # 圆角半径
     RESIZE_MARGIN = 5   # 边缘调整大小的检测区域
     BORDER_WIDTH = 1    # 边框宽度（行业规范）
@@ -87,6 +89,12 @@ class MainWindow(QMainWindow):
         self._resize_edge = None
         self._resize_start_pos = None
         self._resize_start_geometry = None
+
+        # 页面切换相关
+        self._param_panel_expanded_width: dict[int, int] = {}
+        self._param_panel_anim_group = None
+        self._param_panel_anim_panel: Optional[QWidget] = None
+        self._param_panel_anim_target: Optional[int] = None
 
         # 工作线程引用
         self.training_worker: Optional[TrainingWorker] = None
@@ -154,7 +162,7 @@ class MainWindow(QMainWindow):
         painter.setRenderHint(QPainter.Antialiasing, True)
 
         w, h = self.width(), self.height()
-        sidebar_width = 50
+        sidebar_width = self._sidebar.width() if hasattr(self, "_sidebar") else self.SIDEBAR_WIDTH
 
         if self.isMaximized():
             # 最大化：无圆角，直接填充
@@ -347,7 +355,7 @@ class MainWindow(QMainWindow):
         """创建侧边栏"""
         sidebar = QWidget()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(50)
+        sidebar.setFixedWidth(self.SIDEBAR_WIDTH)
         sidebar.setStyleSheet(StyleSheet.sidebar())
 
         layout = QVBoxLayout(sidebar)
@@ -356,20 +364,25 @@ class MainWindow(QMainWindow):
 
         # 训练按钮
         self.btn_train = SidebarButton(svg_template=IconSvg.TRAIN, icon_size=(24, 24))
-        self.btn_train.setFixedSize(50, 50)
+        self.btn_train.setFixedSize(self.SIDEBAR_WIDTH, 50)
         self.btn_train.setChecked(True)
         layout.addWidget(self.btn_train)
 
         # 分类按钮
         self.btn_classify = SidebarButton(svg_template=IconSvg.CLASSIFY, icon_size=(24, 24))
-        self.btn_classify.setFixedSize(50, 50)
+        self.btn_classify.setFixedSize(self.SIDEBAR_WIDTH, 50)
         layout.addWidget(self.btn_classify)
 
         layout.addStretch()
 
+        # 性能状态（紧凑模式）- 位于设置按钮上方
+        self.gpu_status = GPUStatusWidget(compact=True)
+        self.gpu_status.setFixedWidth(self.SIDEBAR_WIDTH - 6)
+        layout.addWidget(self.gpu_status)
+
         # 设置按钮
         self.btn_settings = SidebarButton(svg_template=IconSvg.SETTINGS, icon_size=(28, 28))
-        self.btn_settings.setFixedSize(50, 50)
+        self.btn_settings.setFixedSize(self.SIDEBAR_WIDTH, 50)
         layout.addWidget(self.btn_settings)
 
         # 按钮组
@@ -412,43 +425,158 @@ class MainWindow(QMainWindow):
         self.settings_page.close_requested.connect(self.close)
 
     def _switch_page(self, page_index: int):
-        """切换页面（带动画）"""
+        """切换页面（对齐非模块版的参数区收展逻辑）"""
         from .animations import animation_manager
-        from PySide6.QtCore import QPropertyAnimation, QParallelAnimationGroup
-        from PySide6.QtWidgets import QGraphicsOpacityEffect
 
         current_index = self.page_stack.currentIndex()
         if current_index == page_index:
             return
 
+        self._sync_sidebar_buttons(page_index)
+        self.settings.setValue("ui/current_page", page_index)
+        self.settings.sync()
+
         if not animation_manager.enabled:
-            self.page_stack.setCurrentIndex(page_index)
+            self._apply_page_index(page_index)
+            self._restore_page_param_area(page_index, animate=False)
             return
 
-        # 获取当前和目标页面
-        current_page = self.page_stack.widget(current_index)
-        target_page = self.page_stack.widget(page_index)
+        current_param = self._get_page_param_area(current_index)
 
-        # 确保目标页面有透明度效果
-        target_effect = target_page.graphicsEffect()
-        if not isinstance(target_effect, QGraphicsOpacityEffect):
-            target_effect = QGraphicsOpacityEffect(target_page)
-            target_page.setGraphicsEffect(target_effect)
-        target_effect.setOpacity(0)
+        # 对齐非模块版：切到设置页时，先收起参数区再切换
+        if page_index == 2 and current_param is not None:
+            current_width = current_param.width()
+            if current_width > 0:
+                self._param_panel_expanded_width[current_index] = current_width
 
-        # 切换到目标页面
+            def switch_to_settings():
+                self._apply_page_index(page_index)
+
+            self._animate_page_param_width(current_param, 0, switch_to_settings)
+            return
+
+        # 先切页
+        self._apply_page_index(page_index)
+
+        # 从设置页返回时执行展开动画；普通页面互切时若参数区被意外收起则立即恢复
+        self._restore_page_param_area(page_index, animate=(current_index == 2))
+
+    def _apply_page_index(self, page_index: int):
+        """应用页面索引并同步左侧状态"""
         self.page_stack.setCurrentIndex(page_index)
+        self._sync_sidebar_buttons(page_index)
 
-        # 淡入动画
-        fade_in = QPropertyAnimation(target_effect, b"opacity")
-        fade_in.setDuration(animation_manager._get_duration(animation_manager.DURATION_NORMAL))
-        fade_in.setStartValue(0.0)
-        fade_in.setEndValue(1.0)
-        fade_in.setEasingCurve(animation_manager.create_ease_out_curve())
-        fade_in.start()
+    def _get_page_param_area(self, page_index: int) -> Optional[QWidget]:
+        """获取页面参数区控件（训练/分类页有，设置页无）"""
+        page = self.page_stack.widget(page_index)
+        param_area = getattr(page, "_param_area", None)
+        if isinstance(param_area, QWidget):
+            return param_area
+        return None
 
-        # 保存动画引用防止被回收
-        self._page_anim = fade_in
+    def _restore_page_param_area(self, page_index: int, animate: bool):
+        """恢复训练/分类页参数区，避免切页后出现终端独占"""
+        target_param = self._get_page_param_area(page_index)
+        if target_param is None:
+            return
+
+        expanded_width = self._param_panel_expanded_width.get(page_index, 380)
+        is_collapsed = (
+            (not target_param.isVisible())
+            or target_param.maximumWidth() == 0
+            or target_param.width() == 0
+        )
+
+        if not is_collapsed and not animate:
+            return
+
+        target_param.setVisible(True)
+
+        if animate:
+            target_param.setMinimumWidth(0)
+            target_param.setMaximumWidth(0)
+            self._animate_page_param_width(target_param, expanded_width)
+            return
+
+        target_param.setMinimumWidth(0)
+        target_param.setMaximumWidth(16777215)
+        target_param.updateGeometry()
+
+    def _finalize_param_panel_state(self, panel: Optional[QWidget], target_width: Optional[int]):
+        """将参数区收敛到稳定状态，避免动画中断后卡在异常宽度"""
+        if panel is None or target_width is None:
+            return
+
+        if target_width == 0:
+            panel.setMinimumWidth(0)
+            panel.setMaximumWidth(0)
+            panel.setVisible(False)
+            return
+
+        panel.setVisible(True)
+        panel.setMinimumWidth(0)
+        panel.setMaximumWidth(16777215)
+        panel.updateGeometry()
+
+    def _animate_page_param_width(self, panel: QWidget, target_width: int, on_finished=None):
+        """动画改变页面参数区宽度"""
+        from .animations import animation_manager
+        from PySide6.QtCore import QPropertyAnimation, QParallelAnimationGroup
+
+        if self._param_panel_anim_group:
+            self._param_panel_anim_group.stop()
+            self._finalize_param_panel_state(self._param_panel_anim_panel, self._param_panel_anim_target)
+            self._param_panel_anim_group = None
+            self._param_panel_anim_panel = None
+            self._param_panel_anim_target = None
+
+        current_width = panel.width()
+        if current_width == target_width:
+            self._finalize_param_panel_state(panel, target_width)
+            if on_finished:
+                on_finished()
+            return
+
+        panel.setVisible(True)
+        panel.setMinimumWidth(current_width)
+        panel.setMaximumWidth(current_width)
+
+        min_anim = QPropertyAnimation(panel, b"minimumWidth")
+        min_anim.setDuration(animation_manager._get_duration(200))
+        min_anim.setStartValue(current_width)
+        min_anim.setEndValue(target_width)
+        min_anim.setEasingCurve(animation_manager.create_ease_out_curve())
+
+        max_anim = QPropertyAnimation(panel, b"maximumWidth")
+        max_anim.setDuration(animation_manager._get_duration(200))
+        max_anim.setStartValue(current_width)
+        max_anim.setEndValue(target_width)
+        max_anim.setEasingCurve(animation_manager.create_ease_out_curve())
+
+        group = QParallelAnimationGroup(self)
+        group.addAnimation(min_anim)
+        group.addAnimation(max_anim)
+
+        self._param_panel_anim_panel = panel
+        self._param_panel_anim_target = target_width
+
+        def _cleanup():
+            self._finalize_param_panel_state(panel, target_width)
+            self._param_panel_anim_group = None
+            self._param_panel_anim_panel = None
+            self._param_panel_anim_target = None
+            if on_finished:
+                on_finished()
+
+        group.finished.connect(_cleanup)
+        group.start()
+        self._param_panel_anim_group = group
+
+    def _sync_sidebar_buttons(self, page_index: int):
+        """同步左侧栏按钮勾选状态"""
+        self.btn_train.setChecked(page_index == 0)
+        self.btn_classify.setChecked(page_index == 1)
+        self.btn_settings.setChecked(page_index == 2)
 
     def _on_theme_setting_changed(self, theme: str):
         """处理主题设置变化"""
@@ -706,11 +834,19 @@ class MainWindow(QMainWindow):
         animations_enabled = self.settings_manager.get("appearance.animations_enabled", True)
         animation_manager.enabled = animations_enabled
 
+        # 恢复左侧栏当前页状态
+        saved_page = self.settings.value("ui/current_page", 0, type=int)
+        if saved_page not in (0, 1, 2):
+            saved_page = 0
+        self.page_stack.setCurrentIndex(saved_page)
+        self._sync_sidebar_buttons(saved_page)
+
     def _save_settings(self):
         """保存设置"""
-        settings = self.settings_page.get_settings()
-        for key, value in settings.items():
-            self.settings.setValue(f"settings/{key}", value)
+        gui_settings = self.settings_page.get_settings()
+        self.settings_manager.from_gui_settings(gui_settings)
+        self.settings_manager.save()
+        self.settings.setValue("ui/current_page", self.page_stack.currentIndex())
         self.settings.sync()
 
     # ========== 窗口拖拽和调整大小 ==========
