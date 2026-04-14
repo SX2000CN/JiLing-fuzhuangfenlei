@@ -52,6 +52,7 @@ DARK_THEME = {
 
     # ===== 按钮特殊色 =====
     ColorTokens.BTN_START_HOVER: "#13C468",
+    ColorTokens.BTN_PAUSE_HOVER: "#F59E0B",
     ColorTokens.BTN_STOP_HOVER: "#C42B1C",
     ColorTokens.BTN_CLOSE_HOVER: "#E81123",
 

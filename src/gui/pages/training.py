@@ -18,6 +18,8 @@ class TrainingPage(QWidget):
 
     # 信号
     start_training_requested = Signal()
+    pause_training_requested = Signal()
+    resume_training_requested = Signal()
     stop_training_requested = Signal()
     # 窗口控制信号
     minimize_requested = Signal()
@@ -36,14 +38,16 @@ class TrainingPage(QWidget):
         self._param_area.setStyleSheet(StyleSheet.param_area())
         self._terminal_area.setStyleSheet(StyleSheet.terminal_area())
         self._btn_start.setStyleSheet(StyleSheet.btn_start())
-        self._btn_stop.setStyleSheet(StyleSheet.btn_stop())
+        self._btn_pause.setStyleSheet(StyleSheet.btn_pause())
+        self._btn_stop.setStyleSheet(StyleSheet.btn_stop(0 if self.isMaximized() else 9))
         for divider in self._dividers:
             divider.setStyleSheet(StyleSheet.divider_h())
         # 更新标题样式
         self._page_title.setStyleSheet(StyleSheet.page_title())
         self._terminal_title.setStyleSheet(StyleSheet.terminal_title())
         # 更新按钮分割线
-        self._btn_divider.setStyleSheet(f"background-color: {theme_manager.get_color(ColorTokens.BORDER_MUTED)};")
+        self._btn_divider1.setStyleSheet(f"background-color: {theme_manager.get_color(ColorTokens.BORDER_MUTED)};")
+        self._btn_divider2.setStyleSheet(f"background-color: {theme_manager.get_color(ColorTokens.BORDER_MUTED)};")
 
     def _init_ui(self):
         """初始化 UI"""
@@ -235,11 +239,27 @@ class TrainingPage(QWidget):
         self._btn_start.clicked.connect(self.start_training_requested.emit)
         bottom_layout.addWidget(self._btn_start)
 
-        # 按钮分割线
-        self._btn_divider = QFrame()
-        self._btn_divider.setFixedWidth(1)
-        self._btn_divider.setStyleSheet(f"background-color: {theme_manager.get_color(ColorTokens.BORDER_MUTED)};")
-        bottom_layout.addWidget(self._btn_divider)
+        # 按钮分割线1
+        self._btn_divider1 = QFrame()
+        self._btn_divider1.setFixedWidth(1)
+        self._btn_divider1.setStyleSheet(f"background-color: {theme_manager.get_color(ColorTokens.BORDER_MUTED)};")
+        bottom_layout.addWidget(self._btn_divider1)
+
+        self._btn_pause = QPushButton("暂停训练")
+        self._btn_pause.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._btn_pause.setStyleSheet(StyleSheet.btn_pause())
+        self._btn_pause.setFont(FontManager.action_button_font())
+        self._btn_pause.clicked.connect(self._on_pause_clicked)
+        self._btn_pause.setEnabled(False) # 默认不能用
+        self._btn_pause.hide() # 默认隐藏
+        self._is_paused = False
+        bottom_layout.addWidget(self._btn_pause)
+
+        # 按钮分割线2
+        self._btn_divider2 = QFrame()
+        self._btn_divider2.setFixedWidth(1)
+        self._btn_divider2.setStyleSheet(f"background-color: {theme_manager.get_color(ColorTokens.BORDER_MUTED)};")
+        bottom_layout.addWidget(self._btn_divider2)
 
         self._btn_stop = QPushButton("停止训练")
         self._btn_stop.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -271,6 +291,30 @@ class TrainingPage(QWidget):
         """设置训练状态"""
         self._btn_start.setEnabled(not is_training)
         self._btn_stop.setEnabled(is_training)
+
+        if is_training:
+            self._btn_start.hide()
+            self._btn_divider1.hide()
+            self._btn_pause.show()
+            self._btn_pause.setEnabled(True)
+            self._btn_pause.setText("暂停训练")
+            self._is_paused = False
+        else:
+            self._btn_start.show()
+            self._btn_divider1.show()
+            self._btn_pause.hide()
+            self._btn_pause.setEnabled(False)
+
+    def _on_pause_clicked(self):
+        """挂起或继续训练的内部槽函数"""
+        if not self._is_paused:
+            self._is_paused = True
+            self._btn_pause.setText("继续训练")
+            self.pause_training_requested.emit()
+        else:
+            self._is_paused = False
+            self._btn_pause.setText("暂停训练")
+            self.resume_training_requested.emit()
 
     def update_maximize_state(self, is_maximized: bool):
         """更新最大化状态时的样式"""

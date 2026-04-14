@@ -34,29 +34,30 @@ goto start
 echo.
 echo 正在启动新界面(稳定版)...
 cd /d "%~dp0"
-call "%~dp0.conda\python.exe" "run_new_gui.py"
+call "%~dp0.conda\Scripts\python.exe" "run_new_gui.py"
 goto end
 
 :modular
 echo.
 echo 正在启动新界面(模块化预览)...
 cd /d "%~dp0"
-call "%~dp0.conda\python.exe" "run_new_gui.py" --modular
+call "%~dp0.conda\Scripts\python.exe" "run_new_gui.py" --modular
 goto end
 
 :traditional
 echo.
 echo 正在启动传统界面...
 cd /d "%~dp0"
-call "%~dp0.conda\python.exe" "run_new_gui.py" --traditional
+call "%~dp0.conda\Scripts\python.exe" "run_new_gui.py" --traditional
 goto end
 
 :cli
 echo.
 echo 正在启动命令行分类工具...
 cd /d "%~dp0"
-call "%~dp0.conda\python.exe" "src\cli\classify_cli.py"
+call "%~dp0.conda\Scripts\python.exe" "src\cli\classify_cli.py"
 goto end
 
 :end
 exit
+

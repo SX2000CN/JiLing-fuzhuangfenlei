@@ -238,3 +238,13 @@ class TrainingWorker(QObject):
         self.should_stop = True
         if self.trainer:
             self.trainer.stop_flag = True
+
+    def pause_training(self) -> None:
+        """暂停训练"""
+        if self.trainer:
+            self.trainer.pause_flag = True
+
+    def resume_training(self) -> None:
+        """继续训练"""
+        if self.trainer:
+            self.trainer.pause_flag = False

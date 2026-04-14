@@ -466,6 +466,25 @@ class StyleSheet:
     BTN_START = property(lambda self: StyleSheet.btn_start())
 
     @classmethod
+    def btn_pause(cls) -> str:
+        return f"""
+            QPushButton {{
+                background-color: transparent;
+                border: none;
+                border-radius: 0px;
+                color: {cls._c(ColorTokens.ACTION_BTN_TEXT)};
+                font-size: 24px;
+                font-weight: 300;
+            }}
+            QPushButton:hover {{
+                background-color: {cls._c(ColorTokens.BTN_PAUSE_HOVER)};
+                color: #FFFFFF;
+            }}
+        """
+
+    BTN_PAUSE = property(lambda self: StyleSheet.btn_pause())
+
+    @classmethod
     def btn_stop(cls, corner_radius: int = 9) -> str:
         return f"""
             QPushButton {{
