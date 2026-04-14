@@ -53,6 +53,7 @@ LIGHT_THEME = {
 
     # ===== 按钮特殊色 =====
     ColorTokens.BTN_START_HOVER: "#16A34A",
+    ColorTokens.BTN_PAUSE_HOVER: "#D97706",
     ColorTokens.BTN_STOP_HOVER: "#DC2626",
     ColorTokens.BTN_CLOSE_HOVER: "#E81123",
 

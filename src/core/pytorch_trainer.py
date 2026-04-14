@@ -172,8 +172,9 @@ class ClothingTrainer:
         # 回调函数
         self.callbacks = []
 
-        # 停止标志和进度回调
+        # 停止标志和暂停标志
         self.stop_flag = False
+        self.pause_flag = False
         self.progress_callback = None  # 签名: (batch_idx, total_batches, loss, acc) -> None
 
         logger.info(f"训练器初始化完成:")
@@ -430,7 +431,13 @@ class ClothingTrainer:
 
         with tqdm(train_loader, desc="训练中") as pbar:
             for batch_idx, (images, labels) in enumerate(pbar):
-                # 检查停止标志
+                # 检查暂停和停止标志
+                while getattr(self, 'pause_flag', False):
+                    if self.stop_flag:
+                        logger.info("训练被用户停止")
+                        return None, None
+                    time.sleep(0.5)
+
                 if self.stop_flag:
                     logger.info("训练被用户停止")
                     return None, None
@@ -502,7 +509,12 @@ class ClothingTrainer:
         with torch.no_grad():
             with tqdm(val_loader, desc="验证中") as pbar:
                 for images, labels in pbar:
-                    # 检查停止标志
+                    # 检查暂停和停止标志
+                    while getattr(self, 'pause_flag', False):
+                        if self.stop_flag:
+                            return None, None
+                        time.sleep(0.5)
+
                     if self.stop_flag:
                         return None, None
 

@@ -403,6 +403,8 @@ class MainWindow(QMainWindow):
 
         # 训练页面信号
         self.training_page.start_training_requested.connect(self._start_training)
+        self.training_page.pause_training_requested.connect(self._pause_training)
+        self.training_page.resume_training_requested.connect(self._resume_training)
         self.training_page.stop_training_requested.connect(self._stop_training)
         self.training_page.minimize_requested.connect(self.showMinimized)
         self.training_page.maximize_requested.connect(self._toggle_maximize)
@@ -650,7 +652,8 @@ class MainWindow(QMainWindow):
 
     def _on_training_progress(self, progress: int, message: str, metrics: dict):
         """训练进度更新"""
-        self.training_page.set_progress(progress)
+        if hasattr(self.training_page, 'set_progress'):
+            self.training_page.set_progress(progress)
         if message:
             self.training_page.append_log(f"[INFO] {message}")
 
@@ -679,9 +682,21 @@ class MainWindow(QMainWindow):
     def _stop_training(self):
         """停止训练"""
         if self.training_worker:
-            self.training_worker.should_stop = True
+            self.training_worker.stop_training()
         self.training_page.append_log("[INFO] 停止训练...")
         self.training_page.set_training_state(False)
+
+    def _pause_training(self):
+        """暂停训练"""
+        if self.training_worker:
+            self.training_worker.pause_training()
+        self.training_page.append_log("[INFO] 暂停训练...")
+
+    def _resume_training(self):
+        """继续训练"""
+        if self.training_worker:
+            self.training_worker.resume_training()
+        self.training_page.append_log("[INFO] 继续训练...")
 
     # ========== 分类功能 ==========
 

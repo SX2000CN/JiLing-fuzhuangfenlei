@@ -55,6 +55,7 @@ class ColorTokens:
 
     # ===== 按钮特殊色 =====
     BTN_START_HOVER = "btn.start.hover"     # 开始按钮悬停
+    BTN_PAUSE_HOVER = "btn.pause.hover"     # 暂停按钮悬停
     BTN_STOP_HOVER = "btn.stop.hover"       # 停止按钮悬停
     BTN_CLOSE_HOVER = "btn.close.hover"     # 关闭按钮悬停
 

@@ -1,7 +1,7 @@
 {
   "model_config": {
     "model_name": "tf_efficientnetv2_s",
-    "model_path": "D:\\桌面\\编程\\集领\\JiLing-fuzhuangfenlei\\models/saved_models/best_model.pth",
+    "model_path": "D:\\桌面\\编程\\JiLing-fuzhuangfenlei\\models/demo_model.pth",
     "num_classes": 3,
     "input_size": 384
   },
